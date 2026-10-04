@@ -10,4 +10,5 @@ target/
 .gitnexus/
 .mcp.json
 .swarm/
+.zcode/
 ruvector*

@@ -25,8 +25,10 @@ fn time_string(t: NaiveTime) -> String {
 ///   `[İmsak, Sabah, Shurûq, Dhuhr, Asr, Maghrib, Isha]` — the displayed Shurûq
 ///   is the third column (Diyanet Güneş); "Sabah" (index 1) is an extra chip
 ///   value not used as a prayer time.
+///
 /// Rows without the shuruq column are treated as plain prayer lists, with
 /// sunrise taken from the page-level `shuruq` field.
+///
 /// Exactly `HH:MM` with in-range values — the display contract the red-team
 /// suite pins (F4). Lenient parses (`7:5`, leading spaces) are fine for
 /// internal time math, never for surfaced strings.
@@ -140,12 +142,11 @@ fn build_daily_times(
 /// are minutes, and huge hostile values must not overflow the time math.
 pub(crate) fn resolve_iqama(raw: &str, adhan: &str) -> String {
     let adhan_t = parse_hhmm(adhan);
-    if let Some(mins) = raw.trim().strip_prefix('+') {
-        if let (Ok(n), Some(t)) = (mins.trim().parse::<i64>(), adhan_t) {
-            if let Some(delta) = Duration::try_minutes(n.clamp(0, 24 * 60)) {
-                return time_string(t + delta);
-            }
-        }
+    if let Some(mins) = raw.trim().strip_prefix('+')
+        && let (Ok(n), Some(t)) = (mins.trim().parse::<i64>(), adhan_t)
+        && let Some(delta) = Duration::try_minutes(n.clamp(0, 24 * 60))
+    {
+        return time_string(t + delta);
     }
     if is_displayable_hhmm(raw.trim()) {
         return raw.trim().to_string();
@@ -229,7 +230,7 @@ pub fn month_iqama_times(
 
 /// Adhan (+ iqama) times for a specific date.
 pub fn times_for_date(conf: &ConfData, date: NaiveDate) -> Result<TodayTimes> {
-    let month = date.month() as u32;
+    let month = date.month();
     let day = date.day();
     let adhan = month_times(conf, month)?
         .days

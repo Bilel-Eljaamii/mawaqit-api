@@ -144,11 +144,10 @@ impl MawaqitClient {
                 Ok((conf, None))
             }
             Err(err) => {
-                if let Some(dir) = &self.disk {
-                    if let Some((fetched_at, conf)) = disk::load(dir, mosque_id)
-                    {
-                        return Ok((Arc::new(conf), Some(fetched_at)));
-                    }
+                if let Some(dir) = &self.disk
+                    && let Some((fetched_at, conf)) = disk::load(dir, mosque_id)
+                {
+                    return Ok((Arc::new(conf), Some(fetched_at)));
                 }
                 Err(err)
             }

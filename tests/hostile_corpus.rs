@@ -117,14 +117,13 @@ fn hostile_json_structures_never_panic() {
     // gets moderately nested input — the same guard-rail the fuzz target
     // relies on.
     let deep_json = "{\"a\":".repeat(5000) + "1" + &"}".repeat(5000);
-    match parse_page(
+    if let Ok(conf) = parse_page(
         &format!(
             "<script>var confData = {{\"times\":[\"05:27\",\"07:07\",\"13:21\",\"16:37\",\"19:24\",\"20:51\"],\"calendar\":[{{\"1\":{deep_json}}}]}};</script>"
         ),
         "fuzz",
     ) {
-        Ok(conf) => dig(&conf),
-        Err(_) => {}
+        dig(&conf);
     }
     let moderately_nested = {
         let mut v = serde_json::Value::Null;

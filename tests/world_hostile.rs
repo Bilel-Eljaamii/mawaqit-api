@@ -20,7 +20,6 @@ use serde::Deserialize;
 struct WorldMosque {
     continent: String,
     city: String,
-    name: String,
     slug: String,
 }
 
@@ -124,23 +123,23 @@ async fn hostile_world_tour() {
             to_minutes(&a.maghrib),
             to_minutes(&a.isha),
         );
-        if let (Some(f), Some(sh), Some(dh)) = (f, sh, dh) {
-            if sh < f || sh > dh {
-                anomalies.push(format!(
-                    "{}: sunrise {sh} min outside [{f},{dh}]",
-                    m.slug
-                ));
-            }
+        if let (Some(f), Some(sh), Some(dh)) = (f, sh, dh)
+            && (sh < f || sh > dh)
+        {
+            anomalies.push(format!(
+                "{}: sunrise {sh} min outside [{f},{dh}]",
+                m.slug
+            ));
         }
         for (label, early, late) in [
             ("dhuhr<asr", dh, asr),
             ("asr<maghrib", asr, mg),
             ("maghrib<isha", mg, is),
         ] {
-            if let (Some(e), Some(l)) = (early, late) {
-                if e >= l {
-                    anomalies.push(format!("{}: {label} violated", m.slug));
-                }
+            if let (Some(e), Some(l)) = (early, late)
+                && e >= l
+            {
+                anomalies.push(format!("{}: {label} violated", m.slug));
             }
         }
 

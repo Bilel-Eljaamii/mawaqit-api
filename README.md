@@ -2,7 +2,7 @@
 
 Keyless Rust client for [mawaqit.net](https://mawaqit.net) prayer times — no
 account, no API key, nothing personal stored or sent. Built for
-[mawaqit-desktop](https://github.com/<your-handle>/mawaqit-desktop) and for
+[mawaqit-desktop](https://github.com/Bilel-Eljaamii/mawaqit-desktop) and for
 anyone else who wants to build their own prayer-times app on the same public
 data.
 
@@ -54,6 +54,55 @@ let client = MawaqitClient::new()
 
 Failed fetches now fall back to the stored snapshot; successful fetches
 refresh it. `conf_data_dated` tells you which one you got.
+
+## Examples
+
+Twelve runnable programs under [`examples/`](examples/) — search, calendars,
+offline mirroring, concurrency, error recovery, security hardening. All
+compile with the library; the two marked *offline* need no network.
+
+| Example | What it demonstrates |
+| --- | --- |
+| [`next_prayer`](examples/next_prayer.rs) | search → today's times → countdown to the next prayer |
+| [`year_export`](examples/year_export.rs) | one fetch, whole-year adhan + iqama export to JSON/CSV |
+| [`offline_mirror`](examples/offline_mirror.rs) | disk snapshots warmed concurrently, read back with the network cut |
+| [`world_dashboard`](examples/world_dashboard.rs) | fan-out over cities, who prays next across the board |
+| [`iqama_audit`](examples/iqama_audit.rs) | relative (`+N`) vs absolute iqama config, delay statistics |
+| [`week_alarm_plan`](examples/week_alarm_plan.rs) | future-date lookups, 7-day alarm schedule with lead offsets |
+| [`search_rank`](examples/search_rank.rs) | multi-term search, dedupe, naive relevance ranking |
+| [`error_recovery`](examples/error_recovery.rs) | every `MawaqitError` variant + retry with backoff |
+| [`conf_diff`](examples/conf_diff.rs) | cache invalidation, drift detection, snapshot staleness |
+| [`jumuah_announcements`](examples/jumuah_announcements.rs) | Jumu'a times, announcement date windows, raw extras |
+| [`page_scraper`](examples/page_scraper.rs) | *offline* — HTML → `ConfData` pipeline on synthetic pages |
+| [`slug_hardening`](examples/slug_hardening.rs) | *offline* — hostile-slug and snapshot-path defense matrix |
+
+Run any of them (args optional, each has a usage header):
+
+```sh
+just example next_prayer "Grande Mosquée de Paris"
+just example year_export grande-mosquee-de-paris csv
+# or plain cargo:
+cargo run -p mawaqit-api --example next_prayer -- Paris
+```
+
+## Task runner
+
+All build steps live in the [`justfile`](justfile) — install `just` with
+`pacman -S just` (or `cargo install just`), then:
+
+| Command | What it does |
+| --- | --- |
+| `just verify` | **the gate**: fmt check → clippy (`-D warnings`) → type check → offline tests → docs → offline example smoke |
+| `just build` / `just release` | debug / release build, examples included |
+| `just fmt` | format (nightly rustfmt; the config uses unstable options) |
+| `just lint` | clippy with warnings as errors |
+| `just test` | offline, deterministic suite (hostile HTTP/semantics/corpus, snapshots) |
+| `just live` | the `--ignored` live-site campaign (100+ real mosques) |
+| `just doc` | rustdoc |
+| `just fuzz [target] [secs]` | cargo-fuzz wrapper for the `fuzz/` targets |
+| `just example <name>` | run one example |
+| `just graph` | GitNexus graph change analysis (required before committing) |
+| `just clean` | remove build artifacts |
 
 ## Tests
 
