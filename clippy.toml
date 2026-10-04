@@ -1,0 +1,18 @@
+# ==============================================================================
+# Clippy Configuration (clippy.toml)
+# Configures complexity thresholds and energy domain terminology
+# ==============================================================================
+
+# Minimum Supported Rust Version (MSRV)
+msrv = "1.89.0"
+
+# Complexity Thresholds
+cognitive-complexity-threshold = 20
+too-many-arguments-threshold = 8
+type-complexity-threshold = 250
+single-char-binding-names-threshold = 4
+
+# Allowed Domain Acronyms (Prevents false-positive casing warnings)
+doc-valid-idents = [
+    "Tauri",
+]

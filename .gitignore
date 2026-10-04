@@ -1,0 +1,13 @@
+fuzz/
+target/
+
+# Ruflo local secrets and runtime data
+.agents/
+.claude*/
+.env
+.env.*.local
+.env.local
+.gitnexus/
+.mcp.json
+.swarm/
+ruvector*
