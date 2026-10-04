@@ -5,11 +5,12 @@
 use std::{
     io::{Read, Write},
     net::TcpListener,
-    path::PathBuf,
     thread,
 };
 
 use mawaqit_api::{MawaqitClient, disk};
+
+use crate::common::temp_dir;
 
 // ---------------------------------------------------------------- mock server
 
@@ -55,25 +56,13 @@ fn mosque_page() -> String {
 /// A base URL on port 1 — connection refused instantly.
 const DEAD_BASE: &str = "http://127.0.0.1:1";
 
-fn temp_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "mawaqit-disk-cache-{name}-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .subsec_nanos()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
-}
-
 const SLUG: &str = "grande-mosquee-de-paris";
 
 // ------------------------------------------------------------------- tests
 
 #[tokio::test]
 async fn successful_fetch_writes_a_snapshot_and_serves_memory_afterwards() {
-    let dir = temp_dir("store");
+    let dir = temp_dir("ct", "store");
     let (base, server) = spawn_mock(mosque_page());
     let client = MawaqitClient::with_base_urls(base.clone(), base.clone())
         .with_disk_cache(dir.clone());
@@ -96,7 +85,7 @@ async fn successful_fetch_writes_a_snapshot_and_serves_memory_afterwards() {
 
 #[tokio::test]
 async fn failed_fetch_falls_back_to_the_snapshot() {
-    let dir = temp_dir("fallback");
+    let dir = temp_dir("ct", "fallback");
     // Seed the snapshot through the public API (a previous online session).
     let (base, _server) = spawn_mock(mosque_page());
     let online = MawaqitClient::with_base_urls(base.clone(), base)
@@ -122,7 +111,7 @@ async fn failed_fetch_falls_back_to_the_snapshot() {
 
 #[tokio::test]
 async fn offline_without_a_snapshot_is_an_error() {
-    let dir = temp_dir("empty");
+    let dir = temp_dir("ct", "empty");
     let offline = MawaqitClient::with_base_urls(
         DEAD_BASE.to_string(),
         DEAD_BASE.to_string(),
@@ -133,7 +122,7 @@ async fn offline_without_a_snapshot_is_an_error() {
 
 #[tokio::test]
 async fn hostile_snapshot_file_degrades_to_an_error() {
-    let dir = temp_dir("hostile");
+    let dir = temp_dir("ct", "hostile");
     std::fs::write(disk::snapshot_path(&dir, SLUG), "{\"version\":1,\"mos")
         .unwrap();
     let offline = MawaqitClient::with_base_urls(

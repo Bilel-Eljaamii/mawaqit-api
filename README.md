@@ -106,12 +106,25 @@ All build steps live in the [`justfile`](justfile) — install `just` with
 
 ## Tests
 
+Integration tests live in `tst/` as a four-tier pyramid — one binary per
+tier, submodules in the same-named directory, shared helpers in `common/`:
+
+| Tier | Binary | What it covers |
+| --- | --- | --- |
+| unit | `tst/ut.rs` + `tst/ut/` | pure parse/calendar semantics against hostile input — no I/O |
+| component | `tst/ct.rs` + `tst/ct/` | client vs mock HTTP server, disk snapshot layer — offline |
+| e2e | `tst/e2e.rs` + `tst/e2e/` | live-site world tour over 100+ real mosques |
+| fuzz | `tst/fuzz.rs` + `tst/fuzz/` | deterministic seed-driven mutation fuzzing |
+
 ```sh
-cargo test
+just test          # ut + ct + fuzz — offline, deterministic
+just tier ct       # one tier: ut | ct | fuzz | e2e
+just live          # the e2e world tour (#[ignore]d by default, needs network)
+just fuzz          # the nightly libFuzzer campaign in fuzz/
 ```
 
-The suite is offline and deterministic; the live-site campaign
-(`tests/world_hostile.rs`) is `--ignored` by default.
+Open red-team findings are pinned as `#[ignore]`d tests (`cargo test --
+--ignored` runs the live campaign and the findings together).
 
 ## License
 

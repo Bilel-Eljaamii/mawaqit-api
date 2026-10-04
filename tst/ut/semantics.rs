@@ -1,6 +1,6 @@
 //! Hostile semantics: attacks that use *valid* JSON and *valid* structures to
 //! corrupt behavior instead of crashing it. The panic-safety layer
-//! (`hostile_corpus.rs`, `cargo fuzz`) already proves garbage can't break the
+//! (`ut/corpus.rs`, `cargo fuzz`) already proves garbage can't break the
 //! parser; this suite proves garbage can't lie either.
 //!
 //! Everything goes through [`mawaqit_api::parse_page`] — the same entry point
@@ -14,6 +14,8 @@
 use chrono::Datelike;
 use mawaqit_api::{ConfData, month_times, page_url, parse_page};
 use serde_json::json;
+
+use crate::common::valid_hhmm;
 
 fn conf(value: serde_json::Value) -> ConfData {
     let page = format!("<html><script>var confData = {value};</script></html>");
@@ -31,16 +33,6 @@ fn valid_row() -> Vec<String> {
         .iter()
         .map(|s| s.to_string())
         .collect()
-}
-
-fn is_valid_hhmm(s: &str) -> bool {
-    let b = s.as_bytes();
-    b.len() == 5
-        && b[2] == b':'
-        && b[..2].iter().all(|c| c.is_ascii_digit())
-        && b[3..].iter().all(|c| c.is_ascii_digit())
-        && s[..2].parse::<u8>().map(|h| h < 24).unwrap_or(false)
-        && s[3..].parse::<u8>().map(|m| m < 60).unwrap_or(false)
 }
 
 // ------------------------------------------------------------ contract tests
@@ -86,7 +78,7 @@ fn iqama_offset_rollover_stays_valid_hhmm() {
     let today = mawaqit_api::times_for_date(&c, the_date()).unwrap();
     let iq = today.iqama.expect("iqama present");
     for t in [&iq.fajr, &iq.dhuhr, &iq.asr, &iq.maghrib, &iq.isha] {
-        assert!(is_valid_hhmm(t), "{t} is not valid HH:MM");
+        assert!(valid_hhmm(t), "{t} is not valid HH:MM");
     }
     assert_eq!(iq.fajr, "09:30"); // 23:30 + 600 min, next-day wall clock
 }
@@ -230,7 +222,7 @@ fn finding_f4_surfaced_times_are_always_valid_hhmm() {
         today.adhan.maghrib.as_str(),
         today.adhan.isha.as_str(),
     ] {
-        assert!(is_valid_hhmm(t), "surfaced {t:?} is not a valid HH:MM time");
+        assert!(valid_hhmm(t), "surfaced {t:?} is not a valid HH:MM time");
     }
 
     // The month view carries exactly the surviving day.
@@ -255,7 +247,7 @@ fn finding_f4_surfaced_times_are_always_valid_hhmm() {
         iq.isha.as_str(),
     ] {
         assert!(
-            is_valid_hhmm(t),
+            valid_hhmm(t),
             "surfaced iqama {t:?} is not a valid HH:MM time"
         );
     }

@@ -56,13 +56,17 @@ lint:
 
 # ----------------------------------------------------------------- test ----
 
-# Offline, deterministic suite (hostile HTTP/semantics/corpus + snapshot)
+# All tiers: ut + ct + fuzz (offline) — e2e is #[ignore]d, run `just live`
 test:
     cargo test
 
+# One test tier: ut (pure) | ct (mocked I/O) | fuzz (mutation) | e2e (live)
+tier tier:
+    cargo test --test {{tier}}
+
 # Live-site campaign: 100+ real mosques, takes minutes, needs the network
 live:
-    cargo test --test world_hostile -- --ignored --nocapture
+    cargo test --test e2e -- --ignored --nocapture
 
 # ------------------------------------------------------------ doc/fuzz ----
 

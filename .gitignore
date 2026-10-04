@@ -1,5 +1,6 @@
-fuzz/
-target/
+# the cargo-fuzz workspace at the repo root (NOT tst/fuzz/, the test tier)
+/fuzz/
+/target/
 
 # Ruflo local secrets and runtime data
 .agents/

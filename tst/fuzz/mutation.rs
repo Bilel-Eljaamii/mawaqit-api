@@ -1,5 +1,5 @@
 //! In-tree mutation fuzzer for the mawaqit-api surface that the pinned
-//! corpus (`hostile_corpus.rs`) does not reach: the search-response model,
+//! corpus (`ut/corpus.rs`) does not reach: the search-response model,
 //! the URL builder, and the disk snapshot layer.
 //!
 //! Method: start from a known-valid seed (a real search response, a real
@@ -10,13 +10,13 @@
 //! or a well-formed value, and whatever *does* parse must survive the
 //! downstream pipeline.
 //!
-//! `cargo test -p mawaqit-api --test hostile_fuzz` (offline, fast, CI-safe).
-
-use std::path::PathBuf;
+//! `cargo test -p mawaqit-api --test fuzz` (offline, fast, CI-safe).
 
 use chrono::Datelike;
 use mawaqit_api::{ConfData, Mosque, disk, page_url, parse_page};
 use serde_json::json;
+
+use crate::common::{dig, temp_dir};
 
 // ------------------------------------------------------------- mutation engine
 
@@ -108,18 +108,6 @@ fn for_each_mutation(
 
 // ------------------------------------------------------------------- helpers
 
-fn temp_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "mawaqit-fuzz-{name}-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .subsec_nanos()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
-}
-
 /// A realistic search response: full entries, sparse entries, odd but
 /// legal field shapes.
 const SEARCH_SEED: &[u8] = r#"[{"uuid":"u1","id":12,"slug":"grande-mosquee-de-paris","name":"Grande Mosquée","label":"GMdP","locality":"Paris","country":"France","extra":{"verified":true}},{"slug":"a"},{"label":"l","locality":"Lyon"},{"slug":"ᴍᴏꜱQᴜᴇ","name":".."},{"id":{"deep":[1,2]}}]"#.as_bytes();
@@ -145,14 +133,6 @@ fn snapshot_seed(dir: &std::path::Path, slug: &str) -> Vec<u8> {
     std::fs::read(disk::snapshot_path(dir, slug)).expect("seed file exists")
 }
 
-fn dig(conf: &ConfData) {
-    let date = chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
-    let _ = mawaqit_api::month_times(conf, 1);
-    let _ = mawaqit_api::month_times(conf, 12);
-    let _ = mawaqit_api::month_iqama_times(conf, 7);
-    let _ = mawaqit_api::times_for_date(conf, date);
-}
-
 // --------------------------------------------------------------------- tests
 
 #[test]
@@ -165,7 +145,7 @@ fn fuzz_search_response_parsing_never_panics() {
                 let _ = m.place();
                 if let Some(slug) = m.mosque_id() {
                     // The URL builder is total for any slug; the secure
-                    // confinement contract is asserted in hostile_http F2.
+                    // confinement contract is asserted in ct/hostile_http F2.
                     let _ = page_url("https://mawaqit.net", slug).len();
                     let _ = mawaqit_api::minutes_between(slug, "13:00");
                 }
@@ -176,7 +156,7 @@ fn fuzz_search_response_parsing_never_panics() {
 
 #[test]
 fn fuzz_disk_snapshot_load_never_panics() {
-    let dir = temp_dir("load");
+    let dir = temp_dir("fuzz", "load");
     let seed = snapshot_seed(&dir, "seed-mosque");
     for_each_mutation(&[&seed], 2500, |bytes| {
         let path = disk::snapshot_path(&dir, "seed-mosque");
@@ -211,7 +191,7 @@ fn fuzz_disk_snapshot_load_never_panics() {
 /// time), then un-ignore.
 #[test]
 fn finding_f10_snapshot_roundtrips_wire_tolerated_shapes() {
-    let dir = temp_dir("f10");
+    let dir = temp_dir("fuzz", "f10");
     // The page parses (scraper drops the broken iqama calendar and the
     // numeric name), so the app stores a snapshot for it.
     let page = concat!(
@@ -231,7 +211,7 @@ fn finding_f10_snapshot_roundtrips_wire_tolerated_shapes() {
 
 #[test]
 fn fuzz_disk_store_load_roundtrip_under_hostile_slugs() {
-    let dir = temp_dir("roundtrip");
+    let dir = temp_dir("fuzz", "roundtrip");
     let conf_seed = br#"{"times":["06:30","08:00","13:00","15:30","17:45"],"calendar":[{"1":["06:30","08:00","13:00","15:30","17:45","19:15"]}],"name":"X"}"#;
 
     let hostile_slugs: Vec<String> = vec![
@@ -293,7 +273,7 @@ fn fuzz_search_and_snapshot_coexist_bounded() {
         assert_eq!(mosques[0].display_name().len(), 1_000_000);
     }
 
-    let dir = temp_dir("big-string");
+    let dir = temp_dir("fuzz", "big-string");
     let conf = ConfData {
         raw: json!({ "times": ["06:30", "07:00", "12:00", "15:00", "18:00", "20:00"], "blob": "Z".repeat(2_000_000) }),
         ..Default::default()

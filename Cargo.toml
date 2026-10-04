@@ -5,6 +5,28 @@ edition = "2024"
 license = "MIT"
 description = "Keyless Rust client for mawaqit.net prayer times"
 
+# Integration tests live in tst/ as a four-tier pyramid, each tier one test
+# binary with its submodules in the same-named directory (see tst/*.rs):
+#   ut  — pure parsing/calendar semantics, no I/O
+#   ct  — one component at a time against local mocks (HTTP, disk)
+#   e2e — the live mawaqit.net world tour (#[ignore]d by default)
+#   fuzz— deterministic seed-driven mutation fuzzing
+[[test]]
+name = "ut"
+path = "tst/ut.rs"
+
+[[test]]
+name = "ct"
+path = "tst/ct.rs"
+
+[[test]]
+name = "e2e"
+path = "tst/e2e.rs"
+
+[[test]]
+name = "fuzz"
+path = "tst/fuzz.rs"
+
 [dependencies]
 chrono = { version = "0.4.45", features = ["serde"] }
 # reqwest 0.13 defaults to rustls (no OpenSSL), so this cross-compiles to

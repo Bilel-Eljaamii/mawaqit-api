@@ -113,6 +113,6 @@ async fn main() {
 
     // ---- the API-status family (documented; needs a hostile server) -------
     println!(
-        "\n[7] Api {{ status, url }} fires on non-404 failures — see\n    tests/hostile_http.rs, which drives it against a local mock."
+        "\n[7] Api {{ status, url }} fires on non-404 failures — see\n    tst/ct/hostile_http.rs, which drives it against a local mock."
     );
 }

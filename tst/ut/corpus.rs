@@ -5,8 +5,10 @@
 //! The libFuzzer campaign (`cargo fuzz run` in `fuzz/`) explores beyond this
 //! corpus; this file keeps the known-bad shapes pinned in normal `cargo test`.
 
-use mawaqit_api::{ConfData, parse_page, times_for_date};
+use mawaqit_api::{ConfData, parse_page};
 use serde_json::json;
+
+use crate::common::dig;
 
 /// A minimal valid page used as the base for mutations.
 fn valid_page() -> String {
@@ -18,15 +20,6 @@ fn valid_page() -> String {
         "name": "Hostile Mosque"
     }"#;
     format!("<html><script>var confData = {conf};</script></html>")
-}
-
-fn dig(conf: &ConfData) {
-    // Whatever came out, the calendar pipeline must hold together.
-    let date = chrono::NaiveDate::from_ymd_opt(2026, 9, 25).unwrap();
-    let _ = mawaqit_api::month_times(conf, 1);
-    let _ = mawaqit_api::month_times(conf, 12);
-    let _ = mawaqit_api::month_iqama_times(conf, 7);
-    let _ = times_for_date(conf, date);
 }
 
 #[test]

@@ -11,10 +11,12 @@
 //! included, and already-covered developer mosques are left out.
 //!
 //! Run (hits the live site, takes a few minutes):
-//!   cargo test -p mawaqit-api --test world_hostile -- --ignored --nocapture
+//!   cargo test -p mawaqit-api --test e2e -- --ignored --nocapture
 
 use mawaqit_api::MawaqitClient;
 use serde::Deserialize;
+
+use crate::common::{to_minutes, valid_hhmm};
 
 #[derive(Deserialize)]
 struct WorldMosque {
@@ -24,21 +26,6 @@ struct WorldMosque {
 }
 
 const FIXTURE: &str = include_str!("fixtures/world_mosques.json");
-
-fn valid_hhmm(s: &str) -> bool {
-    let bytes = s.as_bytes();
-    if bytes.len() != 5 || bytes[2] != b':' {
-        return false;
-    }
-    let (h, m) = (s[..2].parse::<u8>(), s[3..].parse::<u8>());
-    matches!((h, m), (Ok(h), Ok(m)) if h < 24 && m < 60)
-}
-
-fn to_minutes(s: &str) -> Option<i64> {
-    let h: i64 = s[..2].parse().ok()?;
-    let m: i64 = s[3..].parse().ok()?;
-    Some(h * 60 + m)
-}
 
 #[tokio::test]
 #[ignore = "hits the live mawaqit.net site for 100+ mosques"]
