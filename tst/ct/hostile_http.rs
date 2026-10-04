@@ -8,9 +8,10 @@
 //!
 //! Two kinds of tests live here:
 //! - always-run contract tests: behavior that must stay true (green);
-//! - `#[ignore = "RED TEAM FINDING F#…"]` tests: secure behavior the client
-//!   does *not* have yet. Each documents a finding; un-ignore after fixing. Run
-//!   them with `cargo test -p mawaqit-api -- --ignored --nocapture`.
+//! - finding regression tests: each started as an `#[ignore]`d red test
+//!   documenting a red-team finding, and turned green with its fix (F1:
+//!   redirects are never followed; F2: hostile slugs stay in the mosque
+//!   namespace).
 
 use std::{
     collections::HashMap,
@@ -363,16 +364,15 @@ async fn cache_never_confuses_two_slugs() {
     assert_eq!(mock.requests().len(), 2);
 }
 
-// ------------------------------------------------- findings (currently red)
+// ------------------------------------------------ findings (regression-pinned)
 
-/// FINDING F1 — the client follows redirects anywhere, including cross-origin.
-/// A single open redirect (or a compromise) on mawaqit.net turns
-/// `conf_data` into "parse whatever evil.test serves" — attacker-authored
-/// prayer times, mosque name and image URL on the user's screen.
-/// FIX: pin `redirect::Policy` to same-host (or `Policy::none`) in
-/// `MawaqitClient::with_base_urls`, then un-ignore.
+/// FINDING F1 — the client followed redirects anywhere, including
+/// cross-origin. A single open redirect (or a compromise) on mawaqit.net
+/// turned `conf_data` into "parse whatever evil.test serves" — attacker-
+/// authored prayer times, mosque name and image URL on the user's screen.
+/// FIXED: the reqwest client pins `redirect::Policy::none()`, so a 302 —
+/// same-origin or not — surfaces as `Api { status: 302 }` instead.
 #[tokio::test]
-#[ignore = "RED TEAM FINDING F1: cross-origin redirects are followed"]
 async fn finding_f1_cross_origin_redirect_is_not_followed() {
     let mock = spawn_mock(vec![
         ("/en/victim", redirect_to("http://attacker.invalid/en/trap")),

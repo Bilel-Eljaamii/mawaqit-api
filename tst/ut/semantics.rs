@@ -7,9 +7,9 @@
 //! network data takes — never through a direct serde deserialize, which is
 //! not what a hostile response hits.
 //!
-//! Always-run tests pin contracts that hold today. `#[ignore = "RED TEAM
-//! FINDING F#…"]` tests pin secure contracts that do NOT hold yet — each is
-//! a finding; run them with `cargo test -p mawaqit-api -- --ignored`.
+//! All red-team findings in this suite (F4, F5, F6) are fixed and pinned as
+//! always-run regression tests: each one failed against the vulnerable
+//! client, then turned green with the fix.
 
 use chrono::Datelike;
 use mawaqit_api::{ConfData, month_times, page_url, parse_page};
@@ -184,7 +184,7 @@ fn page_url_is_well_formed_for_benign_slugs() {
     assert_eq!(url, "https://mawaqit.net/en/grande-mosquee-de-paris");
 }
 
-// ------------------------------------------------- findings (currently red)
+// ------------------------------------------------ findings (regression-pinned)
 
 /// FINDING F4 — surfaced times are never validated. `daily_from_row` passes
 /// adhan strings through verbatim; "25:70" at the fajr position reaches the
@@ -258,10 +258,9 @@ fn finding_f4_surfaced_times_are_always_valid_hhmm() {
 /// accepts "01" and "+1", so a hostile month carrying "1", "01" and "+1"
 /// yields three entries for day 1; `times_for_date` then silently picks
 /// whichever sorts first (BTreeMap order, not data quality).
-/// FIX: dedupe by parsed day in `month_times` (skip duplicates), then
-/// un-ignore.
+/// FIXED: `month_times` deduplicates by parsed day, and the canonical
+/// decimal key always wins over its variants.
 #[test]
-#[ignore = "RED TEAM FINDING F5: duplicate day keys are not deduplicated"]
 fn finding_f5_duplicate_day_keys_yield_one_day() {
     let mut month = std::collections::BTreeMap::new();
     month.insert("1".to_string(), valid_row());
@@ -275,16 +274,17 @@ fn finding_f5_duplicate_day_keys_yield_one_day() {
     }));
     let days = month_times(&c, 1).unwrap().days;
     assert_eq!(days.len(), 1, "day 1 appears {} times", days.len());
+    // The canonical row wins: "1" carries valid_row, not the attacker's.
+    assert_eq!(days[0].times.dhuhr, "13:00", "canonical key must win");
 }
 
 /// FINDING F6 — control and bidi-override characters flow verbatim into
 /// strings that end up in the window title, the tray tooltip and OS
 /// notifications (`Mawaqit: <name>`). U+202E can visually reverse that text
 /// (spoofed tray state), C0 controls corrupt terminal logs.
-/// FIX: strip C0/C1 + bidi controls at the `ConfData` boundary, then
-/// un-ignore.
+/// FIXED: C0/C1 and bidi/isolate controls are stripped from free-text
+/// display fields at the `ConfData` boundary (`scraper::sanitize_text`).
 #[test]
-#[ignore = "RED TEAM FINDING F6: control/bidi characters reach display strings"]
 fn finding_f6_display_strings_carry_no_control_or_bidi_characters() {
     let evil = "\u{202E}esreveR\u{202D}\u{0000}\u{007F}\n\t";
     let c = conf(json!({

@@ -5,6 +5,31 @@ use crate::{
     models::{Announcement, ConfData, RawCalendar},
 };
 
+/// Strip control (C0/C1) and bidi/isolate characters from free-text display
+/// fields — FINDING F6: U+202E inside a mosque name visually reverses the
+/// window title and tray tooltip, C0 controls corrupt terminal logs. Time
+/// strings are deliberately NOT sanitized here: they are pinned strict
+/// elsewhere (F4), and stripping could mint a valid "HH:MM" out of hostile
+/// bytes instead of rejecting the day.
+fn sanitize_text(s: &str) -> String {
+    s.chars()
+        .filter(|ch| {
+            !ch.is_control()
+                && !matches!(ch,
+                    '\u{202A}'..='\u{202E}'
+                    | '\u{2066}'..='\u{2069}'
+                    | '\u{200E}'
+                    | '\u{200F}'
+                )
+        })
+        .collect()
+}
+
+/// The wire-tolerant Option extractor for display strings, sanitized.
+fn display_string(value: &Value, key: &str) -> Option<String> {
+    value[key].as_str().map(sanitize_text)
+}
+
 /// Extract the `confData` JavaScript object embedded in a mosque page.
 ///
 /// The public page (`https://mawaqit.net/{lang}/{slug}`) ships its whole
@@ -42,16 +67,23 @@ pub fn extract_conf_data(page_html: &str, mosque_id: &str) -> Result<ConfData> {
         .map(|a| {
             a.iter()
                 .filter_map(|v| serde_json::from_value(v.clone()).ok())
+                .map(|mut ann: Announcement| {
+                    ann.title = ann.title.take().map(|t| sanitize_text(&t));
+                    ann.content = ann.content.take().map(|t| sanitize_text(&t));
+                    ann.image = ann.image.take().map(|t| sanitize_text(&t));
+                    ann.video = ann.video.take().map(|t| sanitize_text(&t));
+                    ann
+                })
                 .collect()
         })
         .unwrap_or_default();
 
     Ok(ConfData {
-        name: value["name"].as_str().map(str::to_string),
-        jumua: value["jumua"].as_str().map(str::to_string),
-        jumua2: value["jumua2"].as_str().map(str::to_string),
-        image: value["image"].as_str().map(str::to_string),
-        shuruq: value["shuruq"].as_str().map(str::to_string),
+        name: display_string(&value, "name"),
+        jumua: display_string(&value, "jumua"),
+        jumua2: display_string(&value, "jumua2"),
+        image: display_string(&value, "image"),
+        shuruq: display_string(&value, "shuruq"),
         imsak_mode: times.len() == 6,
         times,
         calendar,

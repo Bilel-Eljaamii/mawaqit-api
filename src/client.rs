@@ -63,6 +63,10 @@ impl MawaqitClient {
             .user_agent(USER_AGENT)
             .timeout(REQUEST_TIMEOUT)
             .connect_timeout(CONNECT_TIMEOUT)
+            // FINDING F1: never follow redirects. A 302 — same-origin or
+            // not — surfaces as `Api { status }` instead of turning
+            // conf_data into "parse whatever the redirect target serves".
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .expect("reqwest client builds without custom TLS config");
         Self {

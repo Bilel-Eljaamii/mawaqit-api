@@ -184,23 +184,36 @@ fn raw_month(
 }
 
 /// Adhan times for every day of a month.
+///
+/// FINDING F5: day keys are wire strings and integer `FromStr` accepts
+/// `"01"` and `"+1"`, so a hostile month can carry three rows for one day.
+/// Days are deduplicated, and the canonical decimal key (`"1"`) always wins
+/// over its variants; among variants alone, BTreeMap order decides
+/// deterministically.
 pub fn month_times(conf: &ConfData, month: u32) -> Result<MonthTimes> {
     let raw = raw_month(&conf.calendar, month)?;
-    let mut days = Vec::with_capacity(raw.len());
+    let mut by_day: std::collections::BTreeMap<u32, DailyPrayerTimes> =
+        std::collections::BTreeMap::new();
     for (key, values) in raw {
         let Ok(day) = key.parse::<u32>() else {
             continue;
         };
+        if by_day.contains_key(&day) && key.as_str() != day.to_string() {
+            continue;
+        }
         if let Ok(times) = daily_from_row(values, conf.shuruq.as_deref()) {
-            days.push(DayTimes { day, times });
+            by_day.insert(day, times);
         }
     }
-    days.sort_by_key(|d| d.day);
+    let days = by_day
+        .into_iter()
+        .map(|(day, times)| DayTimes { day, times })
+        .collect();
     Ok(MonthTimes { month, days })
 }
 
 /// Resolved iqama times for every day of a month (uses the adhan calendar
-/// to expand "+N" entries).
+/// to expand "+N" entries). Same duplicate-day rule as [`month_times`].
 pub fn month_iqama_times(
     conf: &ConfData,
     month: u32,
@@ -212,7 +225,8 @@ pub fn month_iqama_times(
     let adhan_by_day: std::collections::HashMap<u32, &DailyPrayerTimes> =
         adhan_month.days.iter().map(|d| (d.day, &d.times)).collect();
 
-    let mut days = Vec::with_capacity(raw_iqama.len());
+    let mut by_day: std::collections::BTreeMap<u32, DailyIqamaTimes> =
+        std::collections::BTreeMap::new();
     for (key, values) in raw_iqama {
         let Ok(day) = key.parse::<u32>() else {
             continue;
@@ -220,11 +234,17 @@ pub fn month_iqama_times(
         let Some(adhan) = adhan_by_day.get(&day) else {
             continue;
         };
+        if by_day.contains_key(&day) && key.as_str() != day.to_string() {
+            continue;
+        }
         if let Ok(times) = daily_iqama_from(values, adhan) {
-            days.push(DayIqamaTimes { day, times });
+            by_day.insert(day, times);
         }
     }
-    days.sort_by_key(|d| d.day);
+    let days = by_day
+        .into_iter()
+        .map(|(day, times)| DayIqamaTimes { day, times })
+        .collect();
     Ok(MonthIqamaTimes { month, days })
 }
 

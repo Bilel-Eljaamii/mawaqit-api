@@ -123,8 +123,10 @@ just live          # the e2e world tour (#[ignore]d by default, needs network)
 just fuzz          # the nightly libFuzzer campaign in fuzz/
 ```
 
-Open red-team findings are pinned as `#[ignore]`d tests (`cargo test --
---ignored` runs the live campaign and the findings together).
+The red-team findings are all fixed and pinned as always-run regression
+tests (F1 redirects, F2 hostile slugs, F4 invalid times, F5 duplicate day
+keys, F6 control characters). Only the live-site tiers stay `#[ignore]`d —
+`just live` runs them.
 
 ## License
 
