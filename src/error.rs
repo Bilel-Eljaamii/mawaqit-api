@@ -19,6 +19,9 @@ pub enum MawaqitError {
     #[error("no calendar data for this mosque")]
     NoCalendar,
 
+    #[error("calendar day {0} was rejected as malformed and surfaces no times")]
+    InvalidDay(u32),
+
     #[error("unexpected response (HTTP {status}) from {url}")]
     Api { status: u16, url: String },
 

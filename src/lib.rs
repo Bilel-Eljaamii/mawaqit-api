@@ -13,7 +13,10 @@
 //! let client = mawaqit_api::MawaqitClient::new();
 //!
 //! let mosques = client.search_mosques("Paris").await?;
-//! let slug = mosques[0].mosque_id().unwrap().to_string();
+//! // Search results may lack a page slug — don't index-and-unwrap.
+//! let slug = mosques.iter().find_map(|m| m.mosque_id())
+//!     .expect("search returned no slug — pick another result")
+//!     .to_string();
 //!
 //! let today = client.today(&slug).await?;
 //! println!("{} — Fajr at {} (iqama {})", mosques[0].display_name(),
@@ -24,7 +27,9 @@
 //! ```
 //!
 //! Iqama entries of the form `"+15"` (minutes after the adhan) are resolved
-//! to absolute `HH:MM` times automatically.
+//! to absolute `HH:MM` times automatically; [`today`](MawaqitClient::today)
+//! also reports `iqama_at`, the rollover-correct instants — a "+600" after
+//! a 23:30 adhan belongs to the *next* day.
 
 mod cache;
 mod calendar;
@@ -37,9 +42,9 @@ pub use calendar::{month_iqama_times, month_times, times_for_date};
 pub use client::{MawaqitClient, is_valid_slug, minutes_between, page_url};
 pub use error::{MawaqitError, Result};
 pub use models::{
-    Announcement, ConfData, DailyIqamaTimes, DailyPrayerTimes, DayIqamaTimes,
-    DayTimes, MonthIqamaTimes, MonthTimes, Mosque, RawCalendar, RawMonth,
-    TodayTimes,
+    Announcement, ConfData, DailyIqamaInstants, DailyIqamaTimes,
+    DailyPrayerTimes, DayIqamaTimes, DayTimes, MonthIqamaTimes, MonthTimes,
+    Mosque, RawCalendar, RawMonth, TodayTimes,
 };
 /// Parse a mosque page's HTML into its [`ConfData`] — exposed for tests
 /// and fuzzing; [`MawaqitClient::conf_data`] is the network-backed

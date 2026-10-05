@@ -13,3 +13,7 @@
 .swarm/
 .zcode/
 ruvector*
+
+# example/demo runtime output
+/times-cache/
+/times-export/

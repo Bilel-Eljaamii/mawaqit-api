@@ -1,16 +1,16 @@
 //! Build a 7-day prayer-alarm plan from a single page fetch.
 //!
 //! The whole week lives in one confData document, so the client fetches
-//! once and the rest is pure local computation: [`times_for_date`] walks the
-//! embedded year calendar for any date. Each alarm fires `--lead` minutes
+//! once and the rest is pure local computation: [`times_for_date`] walks
+//! the embedded year calendar for any date. Each alarm fires `lead` minutes
 //! before the iqama (apps usually wake users before the iqama, not the
 //! adhan) or before the adhan when the mosque publishes no iqama.
 //!
-//! Demonstrates:
-//! - future-date lookups on the year calendar (not just "today");
-//! - "HH:MM" minus N minutes with chrono's wrapping `NaiveTime` math;
-//! - degrading to adhan-based alarms per day, with a summary of what the plan
-//!   could not cover.
+//! The review's C1 finding in practice: alarms must fire at the iqama
+//! **instant** (`TodayTimes.iqama_at`), not at the display string. A
+//! "+600" offset after a 23:30 adhan belongs to the *next* day — a plan
+//! built from the rolled "HH:MM" alone would fire 24 hours early. Days
+//! where the fire time crosses midnight are marked in the output.
 //!
 //! Usage:
 //!   cargo run -p mawaqit-api --example week_alarm_plan -- [slug] [days]
@@ -25,11 +25,6 @@ const PRAYERS: [&str; 5] = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"];
 
 fn parse_hhmm(s: &str) -> Option<NaiveTime> {
     NaiveTime::parse_from_str(s.trim(), "%H:%M").ok()
-}
-
-/// `lead` minutes before `base`; NaiveTime arithmetic wraps around midnight.
-fn fire_at(base: NaiveTime, lead: i64) -> String {
-    (base - Duration::minutes(lead)).format("%H:%M").to_string()
 }
 
 #[tokio::main]
@@ -61,6 +56,8 @@ async fn main() {
     for offset in 0..days {
         let date = today + Duration::days(offset as i64);
         let Ok(day) = times_for_date(&conf, date) else {
+            // A dropped (hostile) day errors as InvalidDay, an absent day
+            // as NoCalendar — either way the plan just skips it.
             skipped.push(date.to_string());
             continue;
         };
@@ -72,36 +69,59 @@ async fn main() {
             ("Maghrib", day.adhan.maghrib.as_str()),
             ("Isha", day.adhan.isha.as_str()),
         ];
-        let iqama = day.iqama.as_ref();
+        let iqama_instants = day.iqama_at.as_ref();
+        let iqama_display = day.iqama.as_ref();
         for (i, (name, adhan_time)) in adhan.iter().enumerate() {
             let Some(base) = parse_hhmm(adhan_time) else { continue };
-            let iqama_time = iqama.map(|iq| match i {
-                0 => iq.fajr.as_str(),
-                1 => iq.dhuhr.as_str(),
-                2 => iq.asr.as_str(),
-                3 => iq.maghrib.as_str(),
-                _ => iq.isha.as_str(),
-            });
-            let (basis, basis_time, base_time) =
-                match iqama_time.and_then(parse_hhmm) {
-                    Some(t) => ("iqama", iqama_time.unwrap_or_default(), t),
-                    None => {
-                        adhan_fallback += 1;
-                        ("adhan", *adhan_time, base)
-                    }
-                };
+            let (basis, basis_time, fire) = match iqama_instants.map(|at| {
+                match i {
+                    0 => at.fajr,
+                    1 => at.dhuhr,
+                    2 => at.asr,
+                    3 => at.maghrib,
+                    _ => at.isha,
+                }
+            }) {
+                Some(at) => {
+                    let display = iqama_display
+                        .map(|iq| match i {
+                            0 => iq.fajr.as_str(),
+                            1 => iq.dhuhr.as_str(),
+                            2 => iq.asr.as_str(),
+                            3 => iq.maghrib.as_str(),
+                            _ => iq.isha.as_str(),
+                        })
+                        .unwrap_or_default();
+                    ("iqama", display.to_string(), at - Duration::minutes(lead))
+                }
+                None => {
+                    adhan_fallback += 1;
+                    (
+                        "adhan",
+                        (*adhan_time).to_string(),
+                        date.and_time(base) - Duration::minutes(lead),
+                    )
+                }
+            };
             planned += 1;
+            // The fire instant may land on the next day (rollover) — say
+            // so instead of silently planning the alarm a day early.
+            let next_day = if fire.date() != date {
+                format!(" → {}", fire.format("%Y-%m-%d"))
+            } else {
+                String::new()
+            };
             println!(
-                "  {}  {:<7} fire {} ({basis} {basis_time})",
+                "  {}  {:<7} fire {}{next_day} ({basis} {basis_time})",
                 date.format("%a %Y-%m-%d"),
                 name,
-                fire_at(base_time, lead),
+                fire.format("%H:%M"),
             );
         }
         println!();
     }
 
-    println!("planned {planned} alarm(s) across {} day(s): {PRAYERS:?}", days);
+    println!("planned {planned} alarm(s) across {days} day(s): {PRAYERS:?}");
     if adhan_fallback > 0 {
         println!("{adhan_fallback} alarm(s) fell back to the adhan (no iqama)");
     }

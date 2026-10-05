@@ -1,10 +1,11 @@
-use chrono::{Datelike, Duration, NaiveDate, NaiveTime};
+use chrono::{Datelike, Duration, NaiveDate, NaiveTime, Timelike};
 
 use crate::{
     error::{MawaqitError, Result},
     models::{
-        ConfData, DailyIqamaTimes, DailyPrayerTimes, DayIqamaTimes, DayTimes,
-        MonthIqamaTimes, MonthTimes, RawCalendar, TodayTimes,
+        ConfData, DailyIqamaInstants, DailyIqamaTimes, DailyPrayerTimes,
+        DayIqamaTimes, DayTimes, MonthIqamaTimes, MonthTimes, RawCalendar,
+        TodayTimes,
     },
 };
 
@@ -136,41 +137,78 @@ fn build_daily_times(
     }
 }
 
-/// Resolve one raw iqama entry: "HH:MM" stays as-is, "+N" becomes
-/// `adhan + N minutes`. Anything else falls back to the adhan time itself,
-/// like the official integrations do. N is clamped to one day: real offsets
-/// are minutes, and huge hostile values must not overflow the time math.
-pub(crate) fn resolve_iqama(raw: &str, adhan: &str) -> String {
+/// Resolve one raw iqama entry into its display string plus the minutes
+/// from midnight of the adhan's calendar day. "+N" offsets can push past
+/// 1440 — that excess *is* the rollover: the iqama belongs to the next
+/// day (C1), which a display string alone cannot carry. Anything
+/// unparseable falls back to the adhan time itself, like the official
+/// integrations do; N is clamped to one day so hostile values cannot
+/// overflow the time math.
+pub(crate) fn resolve_iqama_parts(
+    raw: &str,
+    adhan: &str,
+) -> (String, Option<i64>) {
     let adhan_t = parse_hhmm(adhan);
+    let adhan_min = adhan_t.map(|t| t.hour() as i64 * 60 + t.minute() as i64);
     if let Some(mins) = raw.trim().strip_prefix('+')
         && let (Ok(n), Some(t)) = (mins.trim().parse::<i64>(), adhan_t)
         && let Some(delta) = Duration::try_minutes(n.clamp(0, 24 * 60))
     {
-        return time_string(t + delta);
+        let n = n.clamp(0, 24 * 60);
+        return (time_string(t + delta), Some(adhan_min.unwrap_or(0) + n));
     }
     if is_displayable_hhmm(raw.trim()) {
-        return raw.trim().to_string();
+        let t = parse_hhmm(raw.trim()).unwrap_or_default();
+        return (
+            raw.trim().to_string(),
+            Some(t.hour() as i64 * 60 + t.minute() as i64),
+        );
     }
-    adhan.trim().to_string()
+    (adhan.trim().to_string(), adhan_min)
 }
 
-pub(crate) fn daily_iqama_from(
+/// Display-only view of [`resolve_iqama_parts`] — the pinned historical
+/// behavior. Test-only: production code uses the full parts (C1).
+#[cfg(test)]
+pub(crate) fn resolve_iqama(raw: &str, adhan: &str) -> String {
+    resolve_iqama_parts(raw, adhan).0
+}
+
+pub(crate) fn daily_iqama_parts(
     raw: &[String],
     adhan: &DailyPrayerTimes,
-) -> Result<DailyIqamaTimes> {
+) -> Result<(DailyIqamaTimes, [i64; 5])> {
     if raw.len() < 5 {
         return Err(MawaqitError::Parse(format!(
             "expected 5 iqama times, got {}",
             raw.len()
         )));
     }
-    Ok(DailyIqamaTimes {
-        fajr: resolve_iqama(&raw[0], &adhan.fajr),
-        dhuhr: resolve_iqama(&raw[1], &adhan.dhuhr),
-        asr: resolve_iqama(&raw[2], &adhan.asr),
-        maghrib: resolve_iqama(&raw[3], &adhan.maghrib),
-        isha: resolve_iqama(&raw[4], &adhan.isha),
-    })
+    let (fajr, m0) = resolve_iqama_parts(&raw[0], &adhan.fajr);
+    let (dhuhr, m1) = resolve_iqama_parts(&raw[1], &adhan.dhuhr);
+    let (asr, m2) = resolve_iqama_parts(&raw[2], &adhan.asr);
+    let (maghrib, m3) = resolve_iqama_parts(&raw[3], &adhan.maghrib);
+    let (isha, m4) = resolve_iqama_parts(&raw[4], &adhan.isha);
+    Ok((
+        DailyIqamaTimes { fajr, dhuhr, asr, maghrib, isha },
+        [
+            m0.unwrap_or(0),
+            m1.unwrap_or(0),
+            m2.unwrap_or(0),
+            m3.unwrap_or(0),
+            m4.unwrap_or(0),
+        ],
+    ))
+}
+
+/// Display-only view of [`daily_iqama_parts`] — test-only; production
+/// code needs the minutes too (C1).
+#[cfg(test)]
+pub(crate) fn daily_iqama_from(
+    raw: &[String],
+    adhan: &DailyPrayerTimes,
+) -> Result<DailyIqamaTimes> {
+    daily_iqama_parts(raw, adhan).map(|(times, _)| times)
 }
 
 fn raw_month(
@@ -194,10 +232,13 @@ pub fn month_times(conf: &ConfData, month: u32) -> Result<MonthTimes> {
     let raw = raw_month(&conf.calendar, month)?;
     let mut by_day: std::collections::BTreeMap<u32, DailyPrayerTimes> =
         std::collections::BTreeMap::new();
+    let mut seen: std::collections::BTreeSet<u32> =
+        std::collections::BTreeSet::new();
     for (key, values) in raw {
         let Ok(day) = key.parse::<u32>() else {
             continue;
         };
+        seen.insert(day);
         if by_day.contains_key(&day) && key.as_str() != day.to_string() {
             continue;
         }
@@ -205,11 +246,59 @@ pub fn month_times(conf: &ConfData, month: u32) -> Result<MonthTimes> {
             by_day.insert(day, times);
         }
     }
+    let kept: std::collections::BTreeSet<u32> =
+        by_day.keys().copied().collect();
+    // Days that were on the wire but surface no times (F4) are reported,
+    // not silently lost (M2).
+    let dropped: Vec<u32> = seen.difference(&kept).copied().collect();
     let days = by_day
         .into_iter()
         .map(|(day, times)| DayTimes { day, times })
         .collect();
-    Ok(MonthTimes { month, days })
+    Ok(MonthTimes { month, days, dropped })
+}
+
+/// Resolved iqama data for one month: display times, minutes from midnight
+/// of the adhan's day (rollover included), and the dropped-day list.
+type IqamaMonth = (
+    std::collections::BTreeMap<u32, DailyIqamaTimes>,
+    std::collections::BTreeMap<u32, [i64; 5]>,
+    Vec<u32>,
+);
+
+fn resolved_iqama_month(conf: &ConfData, month: u32) -> Result<IqamaMonth> {
+    let iqama_calendar =
+        conf.iqama_calendar.as_ref().ok_or(MawaqitError::NoCalendar)?;
+    let raw_iqama = raw_month(iqama_calendar, month)?;
+    let adhan_month = month_times(conf, month)?;
+    let adhan_by_day: std::collections::HashMap<u32, &DailyPrayerTimes> =
+        adhan_month.days.iter().map(|d| (d.day, &d.times)).collect();
+
+    let mut times: std::collections::BTreeMap<u32, DailyIqamaTimes> =
+        std::collections::BTreeMap::new();
+    let mut minutes: std::collections::BTreeMap<u32, [i64; 5]> =
+        std::collections::BTreeMap::new();
+    let mut seen: std::collections::BTreeSet<u32> =
+        std::collections::BTreeSet::new();
+    for (key, values) in raw_iqama {
+        let Ok(day) = key.parse::<u32>() else {
+            continue;
+        };
+        seen.insert(day);
+        let Some(adhan) = adhan_by_day.get(&day) else {
+            continue;
+        };
+        if times.contains_key(&day) && key.as_str() != day.to_string() {
+            continue;
+        }
+        if let Ok((t, m)) = daily_iqama_parts(values, adhan) {
+            times.insert(day, t);
+            minutes.insert(day, m);
+        }
+    }
+    let kept: std::collections::BTreeSet<u32> = times.keys().copied().collect();
+    let dropped: Vec<u32> = seen.difference(&kept).copied().collect();
+    Ok((times, minutes, dropped))
 }
 
 /// Resolved iqama times for every day of a month (uses the adhan calendar
@@ -218,53 +307,62 @@ pub fn month_iqama_times(
     conf: &ConfData,
     month: u32,
 ) -> Result<MonthIqamaTimes> {
-    let iqama_calendar =
-        conf.iqama_calendar.as_ref().ok_or(MawaqitError::NoCalendar)?;
-    let raw_iqama = raw_month(iqama_calendar, month)?;
-    let adhan_month = month_times(conf, month)?;
-    let adhan_by_day: std::collections::HashMap<u32, &DailyPrayerTimes> =
-        adhan_month.days.iter().map(|d| (d.day, &d.times)).collect();
-
-    let mut by_day: std::collections::BTreeMap<u32, DailyIqamaTimes> =
-        std::collections::BTreeMap::new();
-    for (key, values) in raw_iqama {
-        let Ok(day) = key.parse::<u32>() else {
-            continue;
-        };
-        let Some(adhan) = adhan_by_day.get(&day) else {
-            continue;
-        };
-        if by_day.contains_key(&day) && key.as_str() != day.to_string() {
-            continue;
-        }
-        if let Ok(times) = daily_iqama_from(values, adhan) {
-            by_day.insert(day, times);
-        }
-    }
-    let days = by_day
+    let (times, _minutes, dropped) = resolved_iqama_month(conf, month)?;
+    let days = times
         .into_iter()
         .map(|(day, times)| DayIqamaTimes { day, times })
         .collect();
-    Ok(MonthIqamaTimes { month, days })
+    Ok(MonthIqamaTimes { month, days, dropped })
 }
 
 /// Adhan (+ iqama) times for a specific date.
+///
+/// The iqama instants carry the rollover (C1): a "+600" after a 23:30
+/// adhan is reported at *next-day* 09:30, which the display string alone
+/// cannot say. A day the calendar rejected as malformed surfaces as
+/// [`MawaqitError::InvalidDay`] — never as fabricated times; `NoCalendar`
+/// means the day is genuinely absent from the mosque's calendar.
 pub fn times_for_date(conf: &ConfData, date: NaiveDate) -> Result<TodayTimes> {
     let month = date.month();
     let day = date.day();
-    let adhan = month_times(conf, month)?
-        .days
-        .into_iter()
-        .find(|d| d.day == day)
-        .ok_or(MawaqitError::NoCalendar)?
-        .times;
-    let iqama = conf
+    let adhan_month = month_times(conf, month)?;
+    let Some(adhan) =
+        adhan_month.days.iter().find(|d| d.day == day).map(|d| d.times.clone())
+    else {
+        return Err(if adhan_month.dropped.contains(&day) {
+            MawaqitError::InvalidDay(day)
+        } else {
+            MawaqitError::NoCalendar
+        });
+    };
+
+    let resolved = conf
         .iqama_calendar
         .as_ref()
-        .and_then(|_| month_iqama_times(conf, month).ok())
-        .and_then(|m| m.days.into_iter().find(|d| d.day == day))
-        .map(|d| d.times);
-    Ok(TodayTimes { date, adhan, iqama })
+        .and_then(|_| resolved_iqama_month(conf, month).ok());
+    let (iqama, iqama_at) = match resolved {
+        Some((times, minutes, _dropped)) => match times.get(&day) {
+            Some(times) => {
+                let midnight =
+                    date.and_hms_opt(0, 0, 0).expect("valid date has midnight");
+                let m = minutes.get(&day).copied().unwrap_or([0; 5]);
+                (
+                    Some(times.clone()),
+                    Some(DailyIqamaInstants {
+                        fajr: midnight + Duration::minutes(m[0]),
+                        dhuhr: midnight + Duration::minutes(m[1]),
+                        asr: midnight + Duration::minutes(m[2]),
+                        maghrib: midnight + Duration::minutes(m[3]),
+                        isha: midnight + Duration::minutes(m[4]),
+                    }),
+                )
+            }
+            // Iqama row hostile for this day: degrade to adhan-only.
+            None => (None, None),
+        },
+        None => (None, None),
+    };
+    Ok(TodayTimes { date, adhan, iqama, iqama_at })
 }
 
 #[cfg(test)]
@@ -462,5 +560,66 @@ mod tests {
                 .unwrap();
         assert_eq!(first.adhan.fajr, "06:30");
         assert_eq!(first.iqama.unwrap().dhuhr, "13:15");
+    }
+
+    #[test]
+    fn iqama_rollover_instants_carry_the_next_day() {
+        // C1: "+600" after a 23:30 adhan belongs to the NEXT day — the
+        // display string shows 09:30 either way, the instant says when.
+        let r = serde_json::from_value(json!({
+            "times": ["23:30", "00:00", "00:00", "00:00", "00:00"],
+            "calendar": [month_map(&[(
+                "1",
+                vec!["23:30", "23:45", "23:50", "23:55", "23:58", "23:59"],
+            )])],
+            "iqamaCalendar": [month_map(&[(
+                "1",
+                vec!["+600", "+600", "+600", "+600", "+600"],
+            )])]
+        }))
+        .unwrap();
+        let today =
+            times_for_date(&r, NaiveDate::from_ymd_opt(2026, 1, 1).unwrap())
+                .unwrap();
+        assert_eq!(today.iqama.as_ref().unwrap().fajr, "09:30");
+        let at = today.iqama_at.expect("rollover instants present");
+        let next = NaiveDate::from_ymd_opt(2026, 1, 2).unwrap();
+        assert_eq!(at.fajr, next.and_hms_opt(9, 30, 0).unwrap());
+        assert_eq!(at.isha, next.and_hms_opt(9, 59, 0).unwrap());
+    }
+
+    #[test]
+    fn iqama_instants_stay_same_day_for_absolute_and_small_offsets() {
+        let day = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+        let today = times_for_date(&sample_conf(), day).unwrap();
+        let at = today.iqama_at.expect("instants present");
+        assert_eq!(at.fajr, day.and_hms_opt(6, 45, 0).unwrap()); // absolute
+        assert_eq!(at.dhuhr, day.and_hms_opt(13, 15, 0).unwrap()); // +15
+    }
+
+    #[test]
+    fn dropped_days_are_reported_and_error_as_invalid_day() {
+        let r = serde_json::from_value(json!({
+            "times": ["06:30", "08:00", "13:00", "15:30", "17:45"],
+            "calendar": [month_map(&[
+                // hostile row: rejected whole (F4) but reported (M2)
+                ("1", vec!["25:70", "06:37", "13:21", "16:37", "19:24", "20:51"]),
+                ("2", vec!["06:30", "08:00", "13:00", "15:30", "17:45", "19:15"]),
+            ])]
+        }))
+        .unwrap();
+        let month = month_times(&r, 1).unwrap();
+        assert_eq!(month.days.len(), 1, "only the valid day surfaces");
+        assert_eq!(month.dropped, vec![1], "the hostile day is reported");
+
+        let err =
+            times_for_date(&r, NaiveDate::from_ymd_opt(2026, 1, 1).unwrap())
+                .unwrap_err();
+        assert!(matches!(err, MawaqitError::InvalidDay(1)), "{err}");
+        // A day that was never on the wire stays NoCalendar.
+        let err =
+            times_for_date(&r, NaiveDate::from_ymd_opt(2026, 1, 7).unwrap())
+                .unwrap_err();
+        assert!(matches!(err, MawaqitError::NoCalendar), "{err}");
     }
 }

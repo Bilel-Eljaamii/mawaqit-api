@@ -9,12 +9,16 @@
 //!
 //! Usage:
 //!   cargo run -p mawaqit-api --example year_export -- <slug> [json|csv]
-//! [out-dir] Example:
+//! [out-dir] [year] Example:
 //!   cargo run -p mawaqit-api --example year_export -- grande-mosquee-de-paris
+//!
+//! confData carries no year (review L2): the export names and stamps the
+//! year you pass (default: the current one) so December and next-December
+//! exports cannot be confused.
 
 use std::path::PathBuf;
 
-use chrono::Local;
+use chrono::{Datelike, Local};
 use mawaqit_api::{
     ConfData, MawaqitClient, MonthIqamaTimes, MonthTimes, month_iqama_times,
     month_times,
@@ -30,6 +34,10 @@ async fn main() {
     let out_dir = PathBuf::from(
         args.next().unwrap_or_else(|| "times-export".to_string()),
     );
+    let calendar_year: i32 = args
+        .next()
+        .and_then(|y| y.parse().ok())
+        .unwrap_or_else(|| Local::now().year());
 
     if format != "json" && format != "csv" {
         eprintln!("format must be `json` or `csv`, got {format:?}");
@@ -65,9 +73,9 @@ async fn main() {
     );
 
     std::fs::create_dir_all(&out_dir).expect("create output dir");
-    let path = out_dir.join(format!("{slug}.{format}"));
+    let path = out_dir.join(format!("{slug}-{calendar_year}.{format}"));
     let written = match format.as_str() {
-        "json" => write_json(&path, &slug, &conf, &year),
+        "json" => write_json(&path, &slug, calendar_year, &conf, &year),
         _ => {
             write_csv(&path, &year).map_err(Box::<dyn std::error::Error>::from)
         }
@@ -86,6 +94,7 @@ type Year = Vec<(MonthTimes, Option<MonthIqamaTimes>)>;
 fn write_json(
     path: &PathBuf,
     slug: &str,
+    calendar_year: i32,
     conf: &ConfData,
     year: &Year,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -110,6 +119,7 @@ fn write_json(
         "slug": slug,
         "mosque": conf.name,
         "imsak_mode": conf.imsak_mode,
+        "year": calendar_year,
         "exported_at": Local::now().date_naive(),
         "jumua": [conf.jumua, conf.jumua2],
         "months": months,

@@ -138,12 +138,29 @@ pub struct DailyIqamaTimes {
     pub isha: String,
 }
 
+/// Absolute naive datetimes for the five iqama prayers of one day, in API
+/// order. These carry what the display strings cannot (C1): a "+600"
+/// offset after a 23:30 adhan lands on the *next* day, and alarms or
+/// calendars must fire at the instant, not at the rolled wall clock.
+#[derive(Debug, Clone, Serialize)]
+pub struct DailyIqamaInstants {
+    pub fajr: chrono::NaiveDateTime,
+    pub dhuhr: chrono::NaiveDateTime,
+    pub asr: chrono::NaiveDateTime,
+    pub maghrib: chrono::NaiveDateTime,
+    pub isha: chrono::NaiveDateTime,
+}
+
 /// Adhan + resolved iqama times for one calendar day.
 #[derive(Debug, Clone, Serialize)]
 pub struct TodayTimes {
     pub date: chrono::NaiveDate,
     pub adhan: DailyPrayerTimes,
     pub iqama: Option<DailyIqamaTimes>,
+    /// Absolute instants for the iqama prayers — the rollover-correct
+    /// counterpart of `iqama` (C1). `None` when the mosque publishes no
+    /// usable iqama for this day.
+    pub iqama_at: Option<DailyIqamaInstants>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -157,6 +174,9 @@ pub struct MonthTimes {
     /// 1-12
     pub month: u32,
     pub days: Vec<DayTimes>,
+    /// Days present in the wire calendar but rejected as malformed (F4) —
+    /// they surface no times. Empty for a clean month (M2).
+    pub dropped: Vec<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -170,4 +190,6 @@ pub struct MonthIqamaTimes {
     /// 1-12
     pub month: u32,
     pub days: Vec<DayIqamaTimes>,
+    /// Same contract as [`MonthTimes::dropped`] (M2).
+    pub dropped: Vec<u32>,
 }

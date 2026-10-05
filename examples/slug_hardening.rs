@@ -4,8 +4,9 @@
 //! A mosque "id" is untrusted input: it arrives from a search response, a
 //! URL parameter, or a hand-typed config. The client's defense-in-depth:
 //!
-//! 1. [`is_valid_slug`] accepts only `a-z0-9` with single hyphens — anything
-//!    else (`../`, `?`, `#`, Unicode, whitespace, 100 KB blobs) is rejected;
+//! 1. [`is_valid_slug`] accepts only `a-z0-9` with single hyphens, at most 128
+//!    bytes — anything else (`../`, `?`, `#`, Unicode, whitespace, giant blobs)
+//!    is rejected;
 //! 2. rejected slugs never reach the wire: [`MawaqitClient`] substitutes a
 //!    deterministic placeholder slug of the same length, which can only 404
 //!    into `MosqueNotFound`;

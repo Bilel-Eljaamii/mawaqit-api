@@ -325,13 +325,32 @@ async fn truncated_body_and_connection_reset_are_errors() {
 
 #[tokio::test]
 async fn oversized_body_is_rejected_by_the_cap() {
-    let over_cap = "A".repeat(20 * 1024 * 1024 + 1);
+    let over_cap = "A".repeat(1024 * 1024 + 1);
     let mock = spawn_mock(vec![(
         "/en/victim",
         http_bytes("HTTP/1.1 200 OK", "text/html", over_cap.as_bytes()),
     )]);
     let err = mock.client().conf_data("victim").await.unwrap_err();
     assert!(err.to_string().contains("cap"), "{err}");
+}
+
+/// Review H1: `invalidate(None)` must drop the search cache too, not just
+/// the page cache — the doc always claimed "everything".
+#[tokio::test]
+async fn invalidate_none_also_drops_the_search_cache() {
+    let mock = spawn_mock(vec![("/2.0/mosque/search", ok_json(&search_ok()))]);
+    let client = mock.client();
+    let _ = client.search_mosques("paris").await.unwrap();
+    let _ = client.search_mosques("paris").await.unwrap();
+    assert_eq!(mock.requests().len(), 1, "second search is cached");
+
+    client.invalidate(None);
+    let _ = client.search_mosques("paris").await.unwrap();
+    assert_eq!(
+        mock.requests().len(),
+        2,
+        "invalidate(None) must clear the search cache"
+    );
 }
 
 #[tokio::test]
@@ -432,15 +451,14 @@ async fn finding_f2_hostile_slug_never_leaves_the_mosque_namespace() {
     }
 }
 
-/// FINDING F3 — the 20 MB cap is applied *after* the whole body is buffered
-/// (`response.bytes()`): a hostile server streaming gigabytes OOMs the app
-/// before the cap trips. This test only proves the cap rejects oversized
-/// responses (it does); the memory-blowup during download is the finding.
-/// FIX: stream the body through `bytes_stream()` and abort once the running
-/// total exceeds the cap, then delete this comment.
+/// FINDING F3 — the cap used to be applied *after* the whole body was
+/// buffered (`response.bytes()`): a hostile server streaming gigabytes
+/// OOMs the app before the cap trips. FIXED: `read_capped` streams the
+/// body chunk-wise and aborts once the running total exceeds the cap, so
+/// memory is bounded by cap + one chunk.
 #[tokio::test]
 async fn finding_f3_documented_cap_rejects_oversized_response() {
-    let over_cap = "A".repeat(20 * 1024 * 1024 + 1);
+    let over_cap = "A".repeat(1024 * 1024 + 1);
     let mock = spawn_mock(vec![(
         "/en/victim",
         http_bytes("HTTP/1.1 200 OK", "text/html", over_cap.as_bytes()),

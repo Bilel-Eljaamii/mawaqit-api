@@ -18,6 +18,10 @@ const USER_AGENT: &str =
 /// confData carries the whole year; refetching a few times a day is plenty.
 const CONF_TTL: Duration = Duration::from_secs(6 * 60 * 60);
 const SEARCH_TTL: Duration = Duration::from_secs(30 * 60);
+/// Cache caps (review H1): a desktop loop browsing hundreds of mosques must
+/// not grow without bound. FIFO eviction keeps the freshest lookups.
+const MAX_CACHED_PAGES: usize = 64;
+const MAX_CACHED_SEARCHES: usize = 256;
 /// Give up rather than hang the caller (the desktop loop shares this client).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -28,8 +32,9 @@ const PROXY_REQUEST_TIMEOUT: Duration = Duration::from_secs(90);
 /// SOCKS5 default when the proxy address carries no port: the system tor
 /// daemon. Tor Browser users pass 9150 explicitly.
 const SOCKS_DEFAULT_PORT: u16 = 9050;
-/// A real mosque page is ~60 KB; anything near this cap is hostile.
-const MAX_RESPONSE_BYTES: usize = 20 * 1024 * 1024;
+/// A real mosque page is ~60 KB; 1 MB is ~15x headroom (review H2 — the old
+/// 20 MB cap contradicted its own comment). Enforced while streaming.
+const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 
 /// Keyless client for mawaqit.net — no account required.
 ///
@@ -112,8 +117,8 @@ impl MawaqitClient {
                 http,
                 api_base,
                 site_base,
-                pages: TtlCache::new(CONF_TTL),
-                searches: TtlCache::new(SEARCH_TTL),
+                pages: TtlCache::new(CONF_TTL, MAX_CACHED_PAGES),
+                searches: TtlCache::new(SEARCH_TTL, MAX_CACHED_SEARCHES),
                 proxy,
                 explicit_timeouts,
             }),
@@ -291,11 +296,15 @@ impl MawaqitClient {
         calendar::month_iqama_times(&conf, month)
     }
 
-    /// Drop the cached page for a mosque (or everything when `None`).
+    /// Drop the cached page for a mosque — or every cached page *and*
+    /// search when `None` (review H1: the search cache used to survive).
     pub fn invalidate(&self, mosque_id: Option<&str>) {
         match mosque_id {
             Some(id) => self.inner.pages.invalidate(id),
-            None => self.inner.pages.clear(),
+            None => {
+                self.inner.pages.clear();
+                self.inner.searches.clear();
+            }
         }
     }
 }
@@ -333,11 +342,14 @@ pub fn page_url(site_base: &str, mosque_id: &str) -> String {
 
 /// Whether `slug` is a mosque page identifier in the shape mawaqit.net
 /// publishes (`grande-mosquee-de-paris`): lowercase letters and digits,
-/// single hyphens between segments. FINDING F2: anything else must never
-/// reach the network verbatim — `../` escapes the mosque namespace and
-/// `?`/`#` swap the page under a legit-looking slug.
+/// single hyphens between segments, at most 128 bytes (review M1 — a
+/// hostile all-lowercase blob would otherwise be "valid" and reach the
+/// wire as a giant URL). FINDING F2: anything else must never reach the
+/// network verbatim — `../` escapes the mosque namespace and `?`/`#` swap
+/// the page under a legit-looking slug.
 pub fn is_valid_slug(slug: &str) -> bool {
     !slug.is_empty()
+        && slug.len() <= 128
         && slug
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
@@ -397,18 +409,22 @@ fn validate_socks_proxy(addr: &str) -> Result<String> {
     Ok(url.as_str().to_string())
 }
 
-/// Read a response body with a hard size cap so a hostile/huge response can
-/// never balloon memory.
+/// Read a response body with a hard size cap enforced while streaming
+/// (review H2), so a hostile/huge response never buffers beyond the cap
+/// plus one chunk.
 async fn read_capped(response: reqwest::Response) -> Result<String> {
-    let bytes = response.bytes().await?;
-    if bytes.len() > MAX_RESPONSE_BYTES {
-        return Err(MawaqitError::Parse(format!(
-            "response of {} bytes exceeds the {} byte cap",
-            bytes.len(),
-            MAX_RESPONSE_BYTES
-        )));
+    let mut response = response;
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        if buf.len() + chunk.len() > MAX_RESPONSE_BYTES {
+            return Err(MawaqitError::Parse(format!(
+                "response exceeds the {} byte cap",
+                MAX_RESPONSE_BYTES
+            )));
+        }
+        buf.extend_from_slice(&chunk);
     }
-    String::from_utf8(bytes.to_vec())
+    String::from_utf8(buf)
         .map_err(|e| MawaqitError::Parse(format!("response is not UTF-8: {e}")))
 }
 
@@ -429,6 +445,14 @@ mod tests {
     fn minutes_between_handles_wrap() {
         assert_eq!(minutes_between("10:00", "10:30"), Some(30));
         assert_eq!(minutes_between("23:30", "00:10"), Some(40));
+    }
+
+    #[test]
+    fn slug_length_is_bounded() {
+        // review M1: an all-lowercase blob used to be "valid" at any size
+        assert!(is_valid_slug(&"a".repeat(128)));
+        assert!(!is_valid_slug(&"a".repeat(129)));
+        assert!(!is_valid_slug(&"x".repeat(100_000)));
     }
 
     // ------------------------------------------------- SOCKS5/Tor proxy

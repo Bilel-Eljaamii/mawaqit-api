@@ -195,8 +195,12 @@ Any string works as a custom agent type.
 - ALWAYS run tests after code changes
 - ALWAYS verify build succeeds before committing
 
+This is a Rust crate — there is no package.json (review M4: the old
+`npm run build && npm test` line referenced a project that does not exist).
+
 ```bash
-npm run build && npm test
+just verify              # the gate: fmt-check, clippy -D warnings, check, test, doc
+just build && just test  # or the individual steps
 ```
 
 ## CLI Quick Reference

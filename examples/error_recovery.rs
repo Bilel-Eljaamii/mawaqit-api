@@ -4,8 +4,8 @@
 //! Two error families need opposite handling:
 //! - **transient** (`Http`, `Api` with a 5xx): retry with backoff;
 //! - **permanent** (`MosqueNotFound`, `ConfDataNotFound`, `Parse`,
-//!   `InvalidMonth`, `NoCalendar`, `InvalidProxy`): retrying identical input is
-//!   wasted work.
+//!   `InvalidMonth`, `NoCalendar`, `InvalidDay`, `InvalidProxy`): retrying
+//!   identical input is wasted work.
 //!
 //! Variants are demonstrated offline where possible (`parse_page` and the
 //! pure calendar functions need no network); the two network-only ones
@@ -37,6 +37,9 @@ fn describe(err: &MawaqitError) -> &'static str {
         }
         MawaqitError::InvalidMonth(_) => "programmer error — permanent",
         MawaqitError::NoCalendar => "mosque publishes no usable calendar",
+        MawaqitError::InvalidDay(_) => {
+            "day rejected as malformed — permanent (no fabricated times)"
+        }
         MawaqitError::InvalidProxy(_) => {
             "bad proxy address (needs socks5h://) — permanent, fix the URL"
         }

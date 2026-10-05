@@ -5,24 +5,40 @@ use crate::{
     models::{Announcement, ConfData, RawCalendar},
 };
 
-/// Strip control (C0/C1) and bidi/isolate characters from free-text display
-/// fields — FINDING F6: U+202E inside a mosque name visually reverses the
-/// window title and tray tooltip, C0 controls corrupt terminal logs. Time
-/// strings are deliberately NOT sanitized here: they are pinned strict
-/// elsewhere (F4), and stripping could mint a valid "HH:MM" out of hostile
-/// bytes instead of rejecting the day.
+/// Strip control characters and the invisible Unicode *Format* (Cf)
+/// category from free-text display fields — FINDING F6 and its review
+/// follow-up: `is_control()` alone misses zero-width characters (U+200B,
+/// U+FEFF), the Arabic marks and the remaining direction/isolate code
+/// points, because they are Format, not Control — yet they spoof display
+/// strings and dodge search/dedupe just the same. Time strings are
+/// deliberately NOT sanitized here: they are pinned strict elsewhere (F4),
+/// and stripping could mint a valid "HH:MM" out of hostile bytes instead
+/// of rejecting the day.
 fn sanitize_text(s: &str) -> String {
-    s.chars()
-        .filter(|ch| {
-            !ch.is_control()
-                && !matches!(ch,
-                    '\u{202A}'..='\u{202E}'
-                    | '\u{2066}'..='\u{2069}'
-                    | '\u{200E}'
-                    | '\u{200F}'
-                )
-        })
-        .collect()
+    s.chars().filter(|ch| !is_invisible(*ch)).collect()
+}
+
+/// `is_control()` plus the invisible Format (Cf) characters. std exposes no
+/// general-category API, so the Cf set is an explicit range table (Unicode
+/// 15); the non-BMP marks are the ones relevant to mosque/agenda text.
+fn is_invisible(ch: char) -> bool {
+    ch.is_control()
+        || matches!(ch,
+            '\u{00AD}'                  // soft hyphen
+            | '\u{0600}'..='\u{0605}'   // Arabic number signs
+            | '\u{061C}'                // Arabic letter mark
+            | '\u{06DD}' | '\u{070F}' | '\u{08E2}'
+            | '\u{180E}'                // Mongolian vowel separator
+            | '\u{200B}'..='\u{200F}'   // zero-width + LRM/RLM
+            | '\u{202A}'..='\u{202E}'   // bidi embedding/overrides
+            | '\u{2060}'..='\u{206F}'   // invisible operators + isolates
+            | '\u{FEFF}'                // BOM / zero-width no-break space
+            | '\u{FFF9}'..='\u{FFFB}'   // interlinear annotation anchors
+            | '\u{110BD}' | '\u{110CD}' // Kaithi number signs
+            | '\u{13430}'..='\u{1343F}' // Egyptian format controls
+            | '\u{1D173}'..='\u{1D17A}' // musical symbol control
+            | '\u{E0001}' | '\u{E0020}'..='\u{E007F}' // variation tags
+        )
 }
 
 /// The wire-tolerant Option extractor for display strings, sanitized.

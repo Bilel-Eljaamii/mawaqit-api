@@ -310,3 +310,23 @@ fn finding_f6_display_strings_carry_no_control_or_bidi_characters() {
         );
     }
 }
+
+/// FINDING F6 (review follow-up) — `is_control()` alone misses the invisible
+/// Format (Cf) characters: zero-width space/joiner, BOM, soft hyphen and the
+/// unassigned-invisible U+2065 are not Control, yet they spoof display
+/// strings and dodge search/dedupe just like the bidi overrides do. The
+/// sanitizer strips the whole Cf family.
+#[test]
+fn finding_f6b_invisible_format_characters_are_stripped() {
+    let evil = "Mas\u{200B}jid\u{FEFF}Al\u{00AD}Noor\u{2065}X";
+    let c = conf(json!({
+        "times": ["06:30", "08:00", "13:00", "15:30", "17:45"],
+        "calendar": [ { "1": valid_row() } ],
+        "name": evil,
+    }));
+    assert_eq!(
+        c.name.as_deref(),
+        Some("MasjidAlNoorX"),
+        "invisible format characters must not survive the boundary"
+    );
+}

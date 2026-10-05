@@ -100,6 +100,12 @@ pub fn store(dir: &Path, slug: &str, conf: &ConfData) -> Option<NaiveDate> {
     }
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, json).ok()?;
+    // Durability before the atomic swap (review L1): without fsync a power
+    // cut can silently lose the just-stored snapshot. The directory entry
+    // itself stays un-fsynced — a residual gap accepted for a cache.
+    if let Ok(f) = std::fs::File::open(&tmp) {
+        let _ = f.sync_all();
+    }
     std::fs::rename(&tmp, &path).ok()?;
     Some(fetched_at)
 }
