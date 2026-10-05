@@ -21,27 +21,34 @@ pub const CDN_URL_BASE: &str = "https://cdn.mawaqit.net/audio";
 const MAX_VOICE_BYTES: usize = 8 * 1024 * 1024;
 
 /// One selectable adhan recording.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub struct AdhanVoice {
     /// Stable identifier, also the CDN file stem (`{id}.mp3`) and the value
     /// stored in the mosque page's `adhanVoice` field.
     pub id: &'static str,
     /// Display name, matching how the official apps label them.
     pub name: &'static str,
+    /// True for the Fajr-recitation variants — UIs show them only on the
+    /// Fajr tab, like the official apps do.
+    pub fajr_variant: bool,
 }
 
 /// Every selectable voice. Fajr variants are separate entries — the official
 /// apps list them that way ("Makkah (Fajr)"), and a consumer decides per
 /// prayer which entry to use.
 pub const ADHAN_VOICES: [AdhanVoice; 8] = [
-    AdhanVoice { id: "adhan-maquah", name: "Makkah" },
-    AdhanVoice { id: "adhan-maquah-fajr", name: "Makkah (Fajr)" },
-    AdhanVoice { id: "adhan-madina", name: "Madinah" },
-    AdhanVoice { id: "adhan-madina-fajr", name: "Madinah (Fajr)" },
-    AdhanVoice { id: "adhan-quds", name: "Al-Aqsa (Qods)" },
-    AdhanVoice { id: "adhan-quds-fajr", name: "Al-Aqsa (Qods, Fajr)" },
-    AdhanVoice { id: "adhan-algeria", name: "Algeria" },
-    AdhanVoice { id: "adhan-egypt", name: "Egypt" },
+    AdhanVoice { id: "adhan-maquah", name: "Makkah", fajr_variant: false },
+    AdhanVoice { id: "adhan-maquah-fajr", name: "Makkah (Fajr)", fajr_variant: true },
+    AdhanVoice { id: "adhan-madina", name: "Madinah", fajr_variant: false },
+    AdhanVoice { id: "adhan-madina-fajr", name: "Madinah (Fajr)", fajr_variant: true },
+    AdhanVoice { id: "adhan-quds", name: "Al-Aqsa (Qods)", fajr_variant: false },
+    AdhanVoice {
+        id: "adhan-quds-fajr",
+        name: "Al-Aqsa (Qods, Fajr)",
+        fajr_variant: true,
+    },
+    AdhanVoice { id: "adhan-algeria", name: "Algeria", fajr_variant: false },
+    AdhanVoice { id: "adhan-egypt", name: "Egypt", fajr_variant: false },
 ];
 
 /// The CDN URL for a catalog voice. Unknown ids are rejected: a caller may
@@ -77,10 +84,8 @@ pub async fn download_voice(
     };
     let dest = dest_dir.join(format!("{id}.mp3"));
 
-    if let Ok(meta) = std::fs::metadata(&dest) {
-        if meta.len() > 0 {
-            return Ok(dest);
-        }
+    if std::fs::metadata(&dest).is_ok_and(|meta| meta.len() > 0) {
+        return Ok(dest);
     }
 
     let response = client.get(&url).send().await?;
@@ -90,12 +95,13 @@ pub async fn download_voice(
     }
     // The CDN sends Content-Length; a larger claim is rejected before any
     // buffering. A missing header falls through to the post-download check.
-    if let Some(len) = response.content_length() {
-        if len as usize > MAX_VOICE_BYTES {
-            return Err(MawaqitError::InvalidVoice(format!(
-                "voice file of {len} bytes exceeds the {MAX_VOICE_BYTES} byte cap"
-            )));
-        }
+    if response
+        .content_length()
+        .is_some_and(|len| len as usize > MAX_VOICE_BYTES)
+    {
+        return Err(MawaqitError::InvalidVoice(format!(
+            "voice file exceeds the {MAX_VOICE_BYTES} byte cap"
+        )));
     }
     let bytes = response.bytes().await?;
     if bytes.len() > MAX_VOICE_BYTES {
