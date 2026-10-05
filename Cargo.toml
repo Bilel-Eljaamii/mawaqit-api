@@ -3,7 +3,12 @@ name = "mawaqit-api"
 version = "0.4.0"
 edition = "2024"
 license = "MIT"
-description = "Keyless Rust client for mawaqit.net prayer times"
+description = "Privacy-first Rust client for Mawaqit prayer times and mosque data. No API key required, no personal data stored or sent. Includes offline disk caching, full iqama calendar resolution, adhan voice downloads, and hostile-input tested security hardening"
+repository = "https://github.com/Bilel-Eljaamii/mawaqit-api"
+homepage = "https://github.com/Bilel-Eljaamii/mawaqit-api"
+readme = "README.md"
+keywords = ["prayer", "islamic", "adhan", "mosque", "timing"]
+categories = ["rust", "islamic", "command-line-utilities"]
 
 # Integration tests live in tst/ as a four-tier pyramid, each tier one test
 # binary with its submodules in the same-named directory (see tst/*.rs):
@@ -14,29 +19,58 @@ description = "Keyless Rust client for mawaqit.net prayer times"
 [[test]]
 name = "ut"
 path = "tst/ut.rs"
+required-features = ["std"]
 
 [[test]]
 name = "ct"
 path = "tst/ct.rs"
+required-features = ["std"]
 
 [[test]]
 name = "e2e"
 path = "tst/e2e.rs"
+required-features = ["std"]
 
 [[test]]
 name = "fuzz"
 path = "tst/fuzz.rs"
+required-features = ["std"]
+
+[features]
+default = ["std"]
+std = [
+    "alloc",
+    "dep:reqwest",
+    "dep:tokio",
+    "chrono/std",
+    "serde/std",
+    "serde_json/std",
+    "thiserror/std",
+    "dep:crc32fast",
+    "dep:heapless",
+]
+alloc = ["chrono/alloc", "serde/alloc", "serde_json/alloc"]
+heapless = ["dep:heapless", "dep:crc32fast"]
 
 [dependencies]
-chrono = { version = "0.4.45", features = ["serde"] }
+chrono = { version = "0.4.45", default-features = false, features = ["serde"] }
 # reqwest 0.13 defaults to rustls (no OpenSSL), so this cross-compiles to
 # Windows MSVC from Linux as-is. "socks" enables the socks5h:// proxy
 # opt-in (Tor routing) — see MawaqitClient::with_socks_proxy.
-reqwest = { version = "0.13.5", features = ["json", "query", "socks"] }
-serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.151"
-thiserror = "2.0.21"
-tokio = { version = "1.53.2", features = ["macros", "rt-multi-thread"] }
+reqwest = { version = "0.13.5", features = [
+    "json",
+    "query",
+    "socks",
+], optional = true }
+serde = { version = "1.0.229", default-features = false, features = ["derive"] }
+serde_json = { version = "1.0.151", default-features = false }
+thiserror = { version = "2.0.21", default-features = false }
+tokio = { version = "1.53.2", features = [
+    "macros",
+    "rt-multi-thread",
+], optional = true }
+heapless = { version = "0.9.3", default-features = false, optional = true }
+crc32fast = { version = "1", default-features = false, optional = true }
 
 [dev-dependencies]
 tokio = { version = "1.53.2", features = ["full"] }
