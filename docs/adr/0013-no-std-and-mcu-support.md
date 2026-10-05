@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-10-05
-- **Decides:** Target platform expansion to bare-metal microcontrollers (ESP32, RP2040, STM32, RISC-V), feature gating architecture, compact binary layout (`MQTC`), and zero-allocation runtime.
+- **Decides:** Target platform expansion to bare-metal microcontrollers (ESP32, RP2040, STM32, RISC-V), feature gating architecture, hardened compact binary layout (`MQTC`), and zero-allocation runtime.
 
 ## Context
 
@@ -14,6 +14,8 @@ However, physical prayer clocks, mosque status displays, and ambient adhan devic
 2. **RAM scarcity**: MCUs often have 32 KB to 512 KB of SRAM. The raw Mawaqit mosque page embeds ~15–25 KB of JSON with over 4,000 strings and arrays for a full year. Repeatedly buffering, parsing, and allocating this JSON at runtime is inefficient or impossible on small MCUs.
 3. **Flash availability**: MCUs typically feature 2 MB to 16 MB of SPI/NOR Flash ROM, which can be memory-mapped directly into the processor's address space.
 4. **Zero-heap safety**: Many embedded applications deliberately forbid dynamic heap allocation (`alloc`) to prevent heap fragmentation and out-of-memory panics.
+5. **Silicon alignment rules**: Architectures like ARM Cortex-M0/M0+ trigger a Hardware Fault (HardFault) on unaligned pointer reads. Structs and memory layouts must be strictly 4-byte aligned.
+6. **Flash integrity**: Microcontroller flash memory is vulnerable to interrupted writes and bit flips. Data must have cryptographic/checksum integrity verification before execution.
 
 We need a design that enables MCU support in the **exact same crate and folder**, maintains 100% backward compatibility for existing `std` consumers, and provides a zero-RAM, zero-heap runtime for microcontrollers.
 
@@ -23,8 +25,12 @@ We need a design that enables MCU support in the **exact same crate and folder**
 | :--- | :--- | :--- |
 | **Package structure** | Single crate in the same folder | Cargo features allow conditional compilation without splitting into multiple crates (`mawaqit-core`), avoiding repository churn and publishing friction. |
 | **Feature tiers (Option A)** | `default = ["std"]`, opt-in `alloc` and `heapless` | Existing consumers continue using `mawaqit-api` with zero configuration changes. Embedded developers opt into `no_std` via `default-features = false`. |
-| **Compact binary (`MQTC`)** | 12-byte header + 22 bytes per day | Time strings (`"05:42"`) are packed as minutes from midnight (`u16`). A full year is ~7.8 KB; a week is 166 bytes. |
-| **User scoping** | User chooses scope before flashing | Developers configure the exact date range needed (weekly, $N$ months, or full year) using a pre-flash tool (`pack_for_mcu`). |
+| **Aligned binary (`MQTC`)** | 24-byte header + 24 bytes per day (or 12 bytes delta) | Strictly 4-byte aligned to guarantee zero HardFaults on ARM Cortex-M0/M0+. Allows safe zero-copy `#[repr(C)]` casting. |
+| **Integrity validation** | CRC-32-IEEE checksum in header | Guarantees that incomplete flash writes, corrupted OTA transmissions, or flipped bits are rejected before running. |
+| **C1 rollover bitfield** | Bit 15 of iqama field marks next-day instant | Eliminates the midnight rollover bug (C1) without violating the strict `HH:MM` display contract. |
+| **Jumu'ah support** | Mosque-level Friday times in header | Prevents displays from showing regular weekday Dhuhr times on Friday. |
+| **Two-tier zero-RAM compression** | Direct flash ($O(1)$ flash mapping, 24 B/day) or on-the-fly stack delta decoding (12 B/day) | Avoids 8 KB RAM decompression buffers required by LZ4/Deflate, maintaining the zero-RAM, zero-heap promise while cutting payload to ~4.3 KB/year. |
+| **Year-end clamping** | Fails fast or clamps past Dec 31st | Mawaqit only serves the current year. Prevents packaging corrupt zeroed data across the year boundary. |
 | **Zero-allocation runtime** | `heapless` integration (`CompactCalendarView`) | Zero-copy borrowing parser over `&'static [u8]` memory-mapped from Flash ROM. Returns `heapless::String<5>` for display strings with **0 bytes of RAM allocated**. |
 | **OS isolation** | `MawaqitClient`, `disk`, `cache`, `download_voice` gated behind `cfg(feature = "std")` | Isolates all `tokio`, `reqwest`, and `std::fs` dependencies to desktop/server builds. |
 
@@ -65,8 +71,8 @@ heapless = [
 
 Rather than forcing an MCU to parse a 60 KB HTML page over Wi-Fi on boot:
 
-1. The developer or build pipeline runs `pack_for_mcu` on a workstation or server.
-2. The user selects the mosque slug, desired scope (week, 1/3/6 months, full year), and export format:
+1. The developer runs `pack_for_mcu` on a workstation or build server.
+2. The user selects the mosque slug, desired scope (week, 1/3/6 months, full year), compression tier (`none` or `delta`), and export format:
    - `.rs`: A static Rust array (`pub static PRAYER_DATA: &[u8] = &[...];`) compiled directly into the binary.
    - `.bin`: A raw binary file flashed to LittleFS/SPIFFS/NVS or raw flash offset.
    - `.h`: A C header for ESP-IDF or STM32 C/C++ firmware.
@@ -77,9 +83,10 @@ Rather than forcing an MCU to parse a 60 KB HTML page over Wi-Fi on boot:
 **Positive**
 
 - **Zero desktop churn**: `MawaqitClient`, desktop caching, and existing tests remain completely intact and unchanged.
-- **Microcontroller native**: Works out of the box on `thumbv7em-none-eabihf` (Cortex-M4/M7), `riscv32imc-unknown-none-elf` (ESP32-C3/RISC-V), and other bare-metal targets.
+- **Hardware safe**: 4-byte aligned layouts prevent HardFault crashes on Cortex-M0/M0+.
 - **Zero RAM consumption**: Memory-mapped flash lookup uses 0 bytes of heap and minimal stack space.
-- **Predictable execution**: Looking up prayer times is a simple array index computation ($O(1)$ arithmetic), eliminating parsing jitter.
+- **Data integrity**: CRC-32 protects against corrupted flash storage.
+- **Correct prayer times**: Jumu'ah overrides and C1 midnight rollovers are preserved.
 
 **Negative / accepted costs**
 
@@ -90,4 +97,5 @@ Rather than forcing an MCU to parse a 60 KB HTML page over Wi-Fi on boot:
 
 - **Separate crates (`mawaqit-core` + `mawaqit-client`)**: Adds repository fragmentation, multiple version numbers, and publishing overhead for minimal gain. Cargo features solve this in the same crate.
 - **Parsing raw JSON on all MCUs**: Requires a dynamic heap and buffers capable of holding 25 KB JSON, which excludes smaller MCUs and violates zero-alloc firmware policies.
-- **Only supporting `alloc` without `heapless`**: Excludes embedded systems that operate under strict zero-heap policies (e.g. automotive, safety-critical, or ultra-low-power microcontrollers).
+- **22-byte unaligned record layout**: Rejected due to catastrophic HardFault risk on ARM Cortex-M0 microcontrollers.
+- **Deflate/LZ4 compression on MCUs**: Rejected because decompressing an 8 KB payload requires an 8 KB RAM buffer, violating the zero-heap, zero-RAM embedded requirement. Replaced with on-the-fly stack-based delta decoding (12 bytes/day).
