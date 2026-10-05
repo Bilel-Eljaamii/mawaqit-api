@@ -44,6 +44,8 @@ pub mod cache;
 #[cfg(any(feature = "std", feature = "alloc"))]
 mod calendar;
 mod client;
+#[cfg(feature = "heapless")]
+pub mod compact;
 #[cfg(feature = "std")]
 pub mod disk;
 mod error;
@@ -51,8 +53,6 @@ mod error;
 mod models;
 #[cfg(any(feature = "std", feature = "alloc"))]
 mod scraper;
-#[cfg(feature = "heapless")]
-pub mod compact;
 pub mod voices;
 
 #[cfg(any(feature = "std", feature = "alloc"))]
@@ -61,6 +61,8 @@ pub use calendar::{month_iqama_times, month_times, times_for_date};
 pub use client::MawaqitClient;
 #[cfg(any(feature = "std", feature = "alloc"))]
 pub use client::{is_valid_slug, minutes_between, page_url};
+#[cfg(feature = "heapless")]
+pub use compact::*;
 pub use error::{MawaqitError, Result};
 #[cfg(any(feature = "std", feature = "alloc"))]
 pub use models::{
@@ -73,8 +75,8 @@ pub use models::{
 /// wrapper.
 #[cfg(any(feature = "std", feature = "alloc"))]
 pub use scraper::extract_conf_data as parse_page;
-pub use voices::{ADHAN_VOICES, AdhanVoice, adhan_voice_url, voice_id_from_conf};
 #[cfg(feature = "std")]
 pub use voices::download_voice;
-#[cfg(feature = "heapless")]
-pub use compact::*;
+pub use voices::{
+    ADHAN_VOICES, AdhanVoice, adhan_voice_url, voice_id_from_conf,
+};

@@ -19,7 +19,9 @@ pub enum MawaqitError {
     MosqueNotFound,
 
     #[cfg(any(feature = "std", feature = "alloc"))]
-    #[error("confData not found in the page of {0}: the page layout may have changed")]
+    #[error(
+        "confData not found in the page of {0}: the page layout may have changed"
+    )]
     ConfDataNotFound(alloc::string::String),
 
     #[cfg(not(any(feature = "std", feature = "alloc")))]

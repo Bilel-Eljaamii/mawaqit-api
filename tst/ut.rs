@@ -15,6 +15,8 @@
 //! - [`semantics`] — attacks with *valid* JSON that try to lie: imsak-mode
 //!   inference, exotic day keys, `+N` rollover, display-field collapse; the
 //!   red-team findings are regression-pinned green here.
+//! - [`voices`] — the adhan voice catalog: URL building, catalog integrity,
+//!   page-to-catalog validation.
 //!
 //! `cargo test --test ut`
 
@@ -31,3 +33,5 @@ mod corpus;
 mod scraper;
 #[path = "ut/semantics.rs"]
 mod semantics;
+#[path = "ut/voices.rs"]
+mod voices;

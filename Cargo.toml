@@ -43,6 +43,7 @@ std = [
     "dep:reqwest",
     "dep:tokio",
     "chrono/std",
+    "chrono/clock",
     "serde/std",
     "serde_json/std",
     "thiserror/std",
