@@ -1,6 +1,6 @@
 [package]
 name = "mawaqit-api"
-version = "0.4.2"
+version = "0.4.3"
 edition = "2024"
 license = "MIT"
 description = "Privacy-first Rust client for Mawaqit prayer times and mosque data. No API key required, no personal data stored or sent. Includes offline disk caching, full iqama calendar resolution, adhan voice downloads, and hostile-input tested security hardening"
@@ -65,12 +65,7 @@ std = [
 # alloc: no_std targets with an embedded heap (ESP32, RP2040) — dynamic
 # ConfData, parse_page, calendar resolution. Pulls in serde_json, which
 # cannot compile without an allocator.
-alloc = [
-    "chrono/alloc",
-    "serde/alloc",
-    "serde_json/alloc",
-    "dep:serde_json",
-]
+alloc = ["chrono/alloc", "serde/alloc", "serde_json/alloc", "dep:serde_json"]
 # heapless: pure zero-alloc MCU firmware — CompactCalendarView over
 # memory-mapped flash.
 heapless = ["dep:heapless", "dep:crc32fast"]
