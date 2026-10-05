@@ -12,6 +12,7 @@
 .mcp.json
 .swarm/
 .zcode/
+.zcodeignore
 ruvector*
 
 # example/demo runtime output

@@ -150,7 +150,13 @@ pub async fn download_voice(
 
     std::fs::create_dir_all(dest_dir)
         .map_err(|e| MawaqitError::Parse(e.to_string()))?;
-    let tmp = dest.with_extension("mp3.tmp");
+    let tmp = dest.with_extension(format!(
+        "mp3.tmp-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0)
+    ));
     std::fs::write(&tmp, &bytes)
         .map_err(|e| MawaqitError::Parse(e.to_string()))?;
     std::fs::rename(&tmp, &dest)
