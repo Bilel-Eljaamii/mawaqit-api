@@ -108,7 +108,7 @@ coverage:
     [ -n "$LPROFDATA" ] || { echo "llvm-profdata binary not found"; exit 1; }
     rm -rf target/coverage
     mkdir -p target/coverage
-    FAIL=0
+    TOTAL=0
     for tier in ut ct fuzz voices; do
         rm -f target/llvm-cov-target/*.profraw target/llvm-cov-target/*.profdata
         cargo llvm-cov --no-report --test "$tier"
@@ -127,11 +127,34 @@ coverage:
             out="$($LLCOV show -instr-profile "target/coverage/prof-$tier.profdata" \
                 "$bin" "$f" 2>/dev/null || true)"
             [ -n "$out" ] || { echo "  no coverage mapping: $f (skipped)"; continue; }
+            # llvm-cov show pads every column with spaces and humanizes
+            # counts ("1.17k"), so the matchers must tolerate both: a line
+            # is executable when the count column holds any digit, and
+            # uncovered when it holds a bare zero.
             printf '%s\n' "$out" | awk -F'|' -v f="$f" \
-                'NF >= 3 && $1 ~ /^[0-9]+$/ && $2 ~ /^ *0$/ { print f ":" $1 }' \
+                'NF >= 3 && $1 ~ /^[ ]*[0-9]+$/ && $2 ~ /^[ ]*0[ ]*$/ { print f ":" $1 + 0 }' \
                 >> "target/coverage/uncovered-$tier.txt"
+            # Total executable lines come from the first tier only — the
+            # tiers share one lib build, so the mapping is identical; the
+            # union below subtracts from this same surface.
+            if [ "$tier" = ut ]; then
+                n=$(printf '%s\n' "$out" | awk -F'|' \
+                    'NF >= 3 && $1 ~ /^[ ]*[0-9]+$/ && $2 ~ /^[ ]*[0-9]/ { n++ } END { print n + 0 }')
+                TOTAL=$((TOTAL + n))
+            fi
         done
     done
+    # The badge: the real percentage behind the gate, written before the
+    # gate check so a failing run still records the honest number.
+    missed_n=$(cat target/coverage/uncovered-*.txt | sort | uniq -c \
+        | awk -v tiers=4 '$1 == tiers' | wc -l)
+    covered=$((TOTAL - missed_n))
+    pct=$((TOTAL > 0 ? covered * 100 / TOTAL : 0))
+    color=brightgreen
+    [ "$pct" -eq 100 ] || color=orange
+    mkdir -p target/coverage/badges
+    printf '{"schemaVersion":1,"label":"line coverage","message":"%d%%","color":"%s"}\n' \
+        "$pct" "$color" > target/coverage/badges/coverage.json
     # Union gate: a src line is uncovered only when NO tier binary executed
     # it — i.e. its file:line appears in every tier's zero list.
     missed=$(cat target/coverage/uncovered-*.txt | sort | uniq -c \
@@ -151,6 +174,7 @@ coverage:
     echo
     echo "✔ src/ line coverage: 100% (lines uncovered in every tier binary: 0)"
     echo "HTML reports: target/coverage/html-<tier>/index.html"
+    echo "Badge JSON:   target/coverage/badges/coverage.json"
 
 # ------------------------------------------------------------ doc/fuzz ----
 

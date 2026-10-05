@@ -514,3 +514,156 @@ fn start_day_of_year_bounds_are_rejected_with_valid_crc() {
         );
     }
 }
+
+// ---- round-2 gate gap: the arms the codec suite never drove -------------
+//
+// The per-binary coverage union went vacuous for a while (regex vs the
+// space-padded llvm-cov show columns), and these arms lost their tests'
+// protection without anyone noticing. Back to 100% for real.
+
+/// The scope wire-byte mapping is total and stable: every variant
+/// roundtrips through `to_byte`/`from_byte`, and unknown bytes degrade to
+/// [`ScopeType::Custom`] — informational, never an error.
+#[test]
+fn scope_byte_mapping_is_total_and_unknowns_degrade_to_custom() {
+    assert_eq!(ScopeType::Week.to_byte(), 0);
+    assert_eq!(ScopeType::Months.to_byte(), 1);
+    assert_eq!(ScopeType::Year.to_byte(), 2);
+    assert_eq!(ScopeType::Custom.to_byte(), 3);
+    assert_eq!(ScopeType::from_byte(0), ScopeType::Week);
+    assert_eq!(ScopeType::from_byte(1), ScopeType::Months);
+    assert_eq!(ScopeType::from_byte(2), ScopeType::Year);
+    assert_eq!(ScopeType::from_byte(3), ScopeType::Custom);
+    assert_eq!(ScopeType::from_byte(0xFF), ScopeType::Custom);
+    assert_eq!(ScopeType::from_byte(42), ScopeType::Custom);
+}
+
+/// The header metadata accessors reflect the packed bits: scope byte,
+/// iqama presence, imsak mode, Jumu'ah fields and the raw flags byte — on
+/// a plain payload and on a fully-flagged one.
+#[test]
+fn header_flag_accessors_reflect_the_packed_bits() {
+    // Plain: HAS_IQAMA set, every other flag off.
+    let plain = builder(date(2026, 1, 1), 1, false).to_bytes().unwrap();
+    let view = CompactCalendarView::from_bytes(&plain).unwrap();
+    assert_eq!(view.scope_type(), ScopeType::Year);
+    assert!(view.has_iqama());
+    assert!(!view.imsak_mode());
+    assert!(!view.has_jumua());
+    assert!(!view.is_fajr_relative());
+    assert_eq!(view.flags() & 0x02, 0x02);
+
+    // Fully flagged: imsak mode, a first Jumu'ah only, fajr-relative
+    // records, Months scope. full_day() encodes in this format: every
+    // iqama sits within one byte of its adhan slot.
+    let mut b =
+        CompactCalendarBuilder::new(date(2026, 2, 1), ScopeType::Months, true)
+            .with_imsak_mode(true)
+            .with_jumuah(Some(660), None);
+    b.push_day(full_day());
+    let flagged = b.to_bytes().unwrap();
+    let view = CompactCalendarView::from_bytes(&flagged).unwrap();
+    assert_eq!(view.scope_type(), ScopeType::Months);
+    assert!(view.imsak_mode());
+    assert!(view.has_jumua());
+    assert!(view.is_fajr_relative());
+    assert_eq!(view.jumua().unwrap().to_hhmm().as_str(), "11:00");
+    assert_eq!(view.jumua2(), None);
+    assert_eq!(view.flags() & 0x0F, 0x0F);
+}
+
+/// Builder bookkeeping: `len`/`is_empty` track pushed days.
+#[test]
+fn builder_len_and_is_empty_track_pushed_days() {
+    let mut b =
+        CompactCalendarBuilder::new(date(2026, 1, 1), ScopeType::Week, false);
+    assert!(b.is_empty());
+    assert_eq!(b.len(), 0);
+    b.push_day(full_day());
+    b.push_day(full_day());
+    assert!(!b.is_empty());
+    assert_eq!(b.len(), 2);
+}
+
+/// A day with no iqama at all packs and decodes in both record formats:
+/// direct records leave the VALID bits unset, fajr-relative records carry
+/// the 0xFF sentinel — and decode reports `iqama: None`, never a
+/// fabricated iqama.
+#[test]
+fn days_without_iqama_pack_and_decode_in_both_formats() {
+    for fajr_relative in [false, true] {
+        let mut b = CompactCalendarBuilder::new(
+            date(2026, 1, 1),
+            ScopeType::Week,
+            fajr_relative,
+        );
+        b.push_day(CompactDayInput {
+            adhan: DAY,
+            iqama: [None; 5],
+            day_flags: 0,
+        });
+        let bytes = b.to_bytes().unwrap();
+        let view = CompactCalendarView::from_bytes(&bytes).unwrap();
+        assert!(!view.has_iqama());
+        let day = view.times_for_date(date(2026, 1, 1)).unwrap();
+        assert!(day.iqama.is_none());
+        for (got, want) in [
+            day.adhan.fajr,
+            day.adhan.shurouq,
+            day.adhan.dhuhr,
+            day.adhan.asr,
+            day.adhan.maghrib,
+            day.adhan.isha,
+        ]
+        .iter()
+        .zip(DAY)
+        {
+            assert_eq!(got.minutes_from_midnight(), want);
+        }
+    }
+}
+
+/// Out-of-range iqama minutes are rejected at pack time in both record
+/// formats, naming the offending prayer's adhan slot.
+#[test]
+fn out_of_range_iqama_minutes_are_rejected_in_both_formats() {
+    for fajr_relative in [false, true] {
+        let mut b = CompactCalendarBuilder::new(
+            date(2026, 1, 1),
+            ScopeType::Week,
+            fajr_relative,
+        );
+        b.push_day(CompactDayInput {
+            adhan: DAY,
+            iqama: iqama([
+                (1441, false),
+                (795, false),
+                (1005, false),
+                (1155, false),
+                (10, true),
+            ]),
+            day_flags: 0,
+        });
+        assert!(
+            matches!(
+                b.to_bytes(),
+                Err(CompactError::TimeOutOfRange { prayer: 0, minutes: 1441 })
+            ),
+            "fajr_relative={fajr_relative}"
+        );
+    }
+}
+
+/// The u16 day-count ceiling is a pack-time error, not a silent wrap.
+#[test]
+fn too_many_days_is_rejected_at_pack_time() {
+    let mut b =
+        CompactCalendarBuilder::new(date(2026, 1, 1), ScopeType::Year, false);
+    let day = CompactDayInput { adhan: DAY, iqama: [None; 5], day_flags: 0 };
+    // u16::MAX days are representable; one more overflows the wire field.
+    for _ in 0..(u16::MAX as usize + 2) {
+        b.push_day(day);
+    }
+    assert_eq!(b.len(), 65_537);
+    assert_eq!(b.to_bytes(), Err(CompactError::TooManyDays(65_537)));
+}

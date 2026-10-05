@@ -30,3 +30,48 @@ jobs:
       # (no caching actions) so the gate itself has no supply chain.
       - name: just verify
         run: just verify
+
+  # Real line coverage: compute it, enforce the 100% gate, and publish the
+  # badge JSON to the `badges` branch — the README badge is a shields.io
+  # endpoint over that JSON, so it always shows the last computed truth,
+  # never a hardcoded claim. The publish step runs even on a red gate: a
+  # failing number is still the honest number. No third-party coverage
+  # service joins the supply chain — plain git and shields.io only.
+  coverage:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the badge JSON to the `badges` branch
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-llvm-cov
+      - name: just coverage
+        run: just coverage
+      - name: publish the badge JSON to the badges branch
+        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          repo_url="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git ls-remote --exit-code --heads "$repo_url" badges >/dev/null 2>&1; then
+            git clone -q --depth 1 --branch badges "$repo_url" badge-branch
+          else
+            git init -q -b badges badge-branch
+            git -C badge-branch remote add origin "$repo_url"
+          fi
+          cp -f target/coverage/badges/coverage.json badge-branch/coverage.json
+          git -C badge-branch config user.name "github-actions[bot]"
+          git -C badge-branch config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C badge-branch add -A
+          if git -C badge-branch diff --cached --quiet; then
+            echo "badge unchanged"
+          else
+            git -C badge-branch commit -qm \
+              "coverage badge: $(sed -n 's/.*"message":"\([^"]*\)".*/\1/p' badge-branch/coverage.json)"
+          fi
+          git -C badge-branch push -q origin badges
