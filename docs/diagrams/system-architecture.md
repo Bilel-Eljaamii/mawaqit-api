@@ -15,7 +15,7 @@ flowchart TB
         API["Public API<br/>MawaqitClient · month_times · times_for_date<br/>parse_page · page_url · is_valid_slug · minutes_between"]
 
         subgraph net["network layer"]
-            CLIENT["client.rs<br/>fetch orchestration · slug validation · response cap"]
+            CLIENT["client.rs<br/>fetch orchestration · slug validation<br/>SOCKS5/Tor opt-in · response cap"]
             CACHE["cache.rs<br/>TtlCache · pages 6h · searches 30min"]
         end
 

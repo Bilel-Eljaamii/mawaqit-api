@@ -6,7 +6,7 @@ suite is specified, and how the pieces fit together visually.
 
 | Folder | Contains | Read it when you want to… |
 | --- | --- | --- |
-| [`adr/`](adr/) | Architecture Decision Records (ADR-0001 … ADR-0011) | understand *why* a design choice was made and what it cost |
+| [`adr/`](adr/) | Architecture Decision Records (ADR-0001 … ADR-0012) | understand *why* a design choice was made and what it cost |
 | [`specs/`](specs/) | Functional and format specifications | know *exactly* what the public API, the wire format, the calendar resolution and the snapshot layer do |
 | [`test-specs/`](test-specs/) | One spec per test suite, per pyramid tier | know what every test asserts, how to run it, and what a failure means |
 | [`diagrams/`](diagrams/) | Mermaid diagrams with prose | see the architecture, request flows, parsing pipeline and threat model at a glance |

@@ -3,6 +3,9 @@
 - **Status:** Accepted (with documented residual, F3)
 - **Date:** 2026-09, revised 2026-10 after finding F3
 - **Decides:** Transport-level limits and identity of the HTTP client.
+- **Refined by:** [ADR-0012](0012-tor-socks5-proxy.md) — the timeouts are
+  constructor options ([`MawaqitClient::with_timeouts`]), and a SOCKS
+  proxy raises the defaults to 30 s / 90 s.
 - **Test:** `tst/ct/hostile_http.rs::finding_f3_documented_cap_rejects_oversized_response`,
   `oversized_body_is_rejected_by_the_cap`, `truncated_body_and_connection_reset_are_errors`.
 

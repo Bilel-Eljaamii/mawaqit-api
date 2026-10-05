@@ -22,6 +22,9 @@ pub enum MawaqitError {
     #[error("unexpected response (HTTP {status}) from {url}")]
     Api { status: u16, url: String },
 
+    #[error("invalid SOCKS5 proxy address: {0}")]
+    InvalidProxy(String),
+
     #[error("malformed payload: {0}")]
     Parse(String),
 }

@@ -21,6 +21,13 @@ const SEARCH_TTL: Duration = Duration::from_secs(30 * 60);
 /// Give up rather than hang the caller (the desktop loop shares this client).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Tor circuits are slow: while a SOCKS proxy is set, these replace the
+/// defaults unless [`MawaqitClient::with_timeouts`] overrode them.
+const PROXY_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+const PROXY_REQUEST_TIMEOUT: Duration = Duration::from_secs(90);
+/// SOCKS5 default when the proxy address carries no port: the system tor
+/// daemon. Tor Browser users pass 9150 explicitly.
+const SOCKS_DEFAULT_PORT: u16 = 9050;
 /// A real mosque page is ~60 KB; anything near this cap is hostile.
 const MAX_RESPONSE_BYTES: usize = 20 * 1024 * 1024;
 
@@ -32,6 +39,9 @@ const MAX_RESPONSE_BYTES: usize = 20 * 1024 * 1024;
 ///   whose embedded `confData` object holds the daily times, the year calendar,
 ///   the iqama calendar and the mosque metadata. One fetched page is shared by
 ///   every data method and cached in memory (6h for pages, 30min for searches).
+/// - Optional Tor routing: [`MawaqitClient::with_socks_proxy`] sends every
+///   request through a SOCKS5 proxy with remote DNS. The library never enables
+///   it by default and never starts or bundles a Tor daemon.
 #[derive(Clone)]
 pub struct MawaqitClient {
     inner: Arc<Inner>,
@@ -46,6 +56,13 @@ struct Inner {
     site_base: String,
     pages: TtlCache<Arc<ConfData>>,
     searches: TtlCache<Vec<Mosque>>,
+    /// Construction knobs, retained so the chainable builders
+    /// ([`MawaqitClient::with_socks_proxy`],
+    /// [`MawaqitClient::with_timeouts`]) can rebuild the transport.
+    /// `explicit_timeouts` is `None` for the defaults, which a proxy
+    /// raises automatically.
+    proxy: Option<String>,
+    explicit_timeouts: Option<(Duration, Duration)>,
 }
 
 impl MawaqitClient {
@@ -59,26 +76,49 @@ impl MawaqitClient {
     /// Same client against custom base URLs — the seam the hostile HTTP
     /// tests use to point the client at a local mock server.
     pub fn with_base_urls(api_base: String, site_base: String) -> Self {
-        let http = reqwest::Client::builder()
+        Self::from_parts(api_base, site_base, None, None, None)
+            .expect("default construction cannot fail: no proxy to configure")
+    }
+
+    /// Single construction path: every builder funnels here so base URLs,
+    /// the disk cache, the SOCKS proxy and the timeouts compose in any
+    /// order. `explicit_timeouts` is `None` for the defaults (raised
+    /// automatically when a proxy is set).
+    fn from_parts(
+        api_base: String,
+        site_base: String,
+        disk: Option<Arc<PathBuf>>,
+        proxy: Option<String>,
+        explicit_timeouts: Option<(Duration, Duration)>,
+    ) -> Result<Self> {
+        let (connect_timeout, request_timeout) =
+            resolve_timeouts(proxy.is_some(), explicit_timeouts);
+        let mut builder = reqwest::Client::builder()
             .user_agent(USER_AGENT)
-            .timeout(REQUEST_TIMEOUT)
-            .connect_timeout(CONNECT_TIMEOUT)
+            .timeout(request_timeout)
+            .connect_timeout(connect_timeout)
             // FINDING F1: never follow redirects. A 302 — same-origin or
             // not — surfaces as `Api { status }` instead of turning
             // conf_data into "parse whatever the redirect target serves".
-            .redirect(reqwest::redirect::Policy::none())
+            .redirect(reqwest::redirect::Policy::none());
+        if let Some(proxy) = &proxy {
+            builder = builder.proxy(reqwest::Proxy::all(proxy)?);
+        }
+        let http = builder
             .build()
             .expect("reqwest client builds without custom TLS config");
-        Self {
+        Ok(Self {
             inner: Arc::new(Inner {
                 http,
                 api_base,
                 site_base,
                 pages: TtlCache::new(CONF_TTL),
                 searches: TtlCache::new(SEARCH_TTL),
+                proxy,
+                explicit_timeouts,
             }),
-            disk: None,
-        }
+            disk,
+        })
     }
 
     /// Serve [`Self::conf_data`] from a disk snapshot when the network is
@@ -87,6 +127,43 @@ impl MawaqitClient {
     pub fn with_disk_cache(mut self, dir: PathBuf) -> Self {
         self.disk = Some(Arc::new(dir));
         self
+    }
+
+    /// Route all traffic through a SOCKS5 proxy with **remote DNS** — the
+    /// Tor opt-in. The address must be `socks5h://host[:port]`:
+    /// `socks5://` and any http(s) proxy are rejected
+    /// ([`MawaqitError::InvalidProxy`]) because resolving DNS outside the
+    /// proxy defeats the purpose. A missing port defaults to 9050 (the
+    /// system tor daemon; Tor Browser users pass 9150). Timeouts rise to
+    /// 30 s connect / 90 s request unless [`Self::with_timeouts`]
+    /// overrode them. Calling this again replaces the previous proxy.
+    ///
+    /// The library never starts or bundles a Tor daemon — point this at
+    /// one that is already running.
+    pub fn with_socks_proxy(self, addr: impl Into<String>) -> Result<Self> {
+        let proxy = validate_socks_proxy(&addr.into())?;
+        Self::from_parts(
+            self.inner.api_base.clone(),
+            self.inner.site_base.clone(),
+            self.disk.clone(),
+            Some(proxy),
+            self.inner.explicit_timeouts,
+        )
+    }
+
+    /// Override the transport timeouts (connect, request). Without this,
+    /// the defaults are 10 s / 30 s — raised to 30 s / 90 s automatically
+    /// when a SOCKS proxy is set. Composes with
+    /// [`Self::with_socks_proxy`] in any order.
+    pub fn with_timeouts(self, connect: Duration, request: Duration) -> Self {
+        Self::from_parts(
+            self.inner.api_base.clone(),
+            self.inner.site_base.clone(),
+            self.disk.clone(),
+            self.inner.proxy.clone(),
+            Some((connect, request)),
+        )
+        .expect("rebuilding with an already-validated proxy cannot fail")
     }
 
     /// `GET /api/2.0/mosque/search?word=...` — keyword search, no auth.
@@ -229,6 +306,24 @@ impl Default for MawaqitClient {
     }
 }
 
+impl std::fmt::Debug for MawaqitClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MawaqitClient")
+            .field("api_base", &self.inner.api_base)
+            .field("site_base", &self.inner.site_base)
+            .field("proxy", &self.inner.proxy)
+            .field(
+                "timeouts",
+                &resolve_timeouts(
+                    self.inner.proxy.is_some(),
+                    self.inner.explicit_timeouts,
+                ),
+            )
+            .field("disk_cache", &self.disk)
+            .finish_non_exhaustive()
+    }
+}
+
 /// The exact URL [`MawaqitClient::conf_data`] fetches for a slug. Exposed as
 /// a pure function so hostile-slug handling (`../`, `?`, `#`, giant or
 /// non-ASCII slugs) can be asserted without touching the network.
@@ -249,6 +344,57 @@ pub fn is_valid_slug(slug: &str) -> bool {
         && !slug.starts_with('-')
         && !slug.ends_with('-')
         && !slug.contains("--")
+}
+
+/// Effective (connect, request) timeouts: an explicit
+/// [`MawaqitClient::with_timeouts`] wins; otherwise a proxy raises the
+/// defaults (Tor circuits are slow).
+fn resolve_timeouts(
+    proxied: bool,
+    explicit: Option<(Duration, Duration)>,
+) -> (Duration, Duration) {
+    match explicit {
+        Some(timeouts) => timeouts,
+        None if proxied => (PROXY_CONNECT_TIMEOUT, PROXY_REQUEST_TIMEOUT),
+        None => (CONNECT_TIMEOUT, REQUEST_TIMEOUT),
+    }
+}
+
+/// Validate a SOCKS5 proxy address and return the canonical URL for
+/// `reqwest::Proxy`. Pure — the fail-fast half of
+/// [`MawaqitClient::with_socks_proxy`], assertable without touching the
+/// network like [`is_valid_slug`]. Rules: scheme `socks5h` exactly
+/// (remote DNS — plain `socks5` or an http(s) proxy leaks resolution),
+/// non-empty host, no path/query/fragment, port defaulting to
+/// [`SOCKS_DEFAULT_PORT`].
+fn validate_socks_proxy(addr: &str) -> Result<String> {
+    let reject = |why: String| MawaqitError::InvalidProxy(why);
+    let mut url = reqwest::Url::parse(addr.trim())
+        .map_err(|e| reject(format!("{addr:?}: {e}")))?;
+    if url.scheme() != "socks5h" {
+        return Err(reject(format!(
+            "{addr:?}: scheme {:?} is not socks5h — use \
+             socks5h://host[:port]; plain socks5/http(s) would resolve \
+             DNS outside the proxy",
+            url.scheme()
+        )));
+    }
+    if url.host_str().is_none_or(str::is_empty) {
+        return Err(reject(format!("{addr:?}: empty host")));
+    }
+    if (url.path() != "/" && !url.path().is_empty())
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(reject(format!(
+            "{addr:?}: a proxy address is scheme://host[:port] only — \
+             no path, query or fragment"
+        )));
+    }
+    if url.port().is_none() && url.set_port(Some(SOCKS_DEFAULT_PORT)).is_err() {
+        return Err(reject(format!("{addr:?}: cannot apply the default port")));
+    }
+    Ok(url.as_str().to_string())
 }
 
 /// Read a response body with a hard size cap so a hostile/huge response can
@@ -283,6 +429,94 @@ mod tests {
     fn minutes_between_handles_wrap() {
         assert_eq!(minutes_between("10:00", "10:30"), Some(30));
         assert_eq!(minutes_between("23:30", "00:10"), Some(40));
+    }
+
+    // ------------------------------------------------- SOCKS5/Tor proxy
+
+    #[test]
+    fn proxy_validation_accepts_socks5h_and_defaults_the_port() {
+        let cases = [
+            ("socks5h://127.0.0.1", "127.0.0.1", Some(9050)), // system tor
+            ("socks5h://127.0.0.1:9050", "127.0.0.1", Some(9050)),
+            ("socks5h://localhost:9150", "localhost", Some(9150)), /* Tor Browser */
+            ("socks5h://[::1]:9050", "[::1]", Some(9050)),
+            ("socks5h://user:pass@host:1080", "host", Some(1080)),
+        ];
+        for (addr, host, port) in cases {
+            let validated = validate_socks_proxy(addr).expect(addr);
+            let url = reqwest::Url::parse(&validated).expect("canonical URL");
+            assert_eq!(url.scheme(), "socks5h", "{addr:?}");
+            assert_eq!(url.host_str(), Some(host), "{addr:?}");
+            assert_eq!(url.port(), port, "{addr:?}");
+        }
+    }
+
+    #[test]
+    fn proxy_validation_rejects_everything_that_is_not_socks5h() {
+        for addr in [
+            "",
+            "   ",
+            "garbage",
+            "127.0.0.1:9050",          // no scheme
+            "socks5://127.0.0.1:9050", // local DNS — defeats Tor
+            "http://127.0.0.1:8080",
+            "https://127.0.0.1:443",
+            "ftp://host",
+            "socks5h://", // empty host
+            "socks5h://host:9050/path",
+            "socks5h://host/?x=1",
+            "socks5h://host#frag",
+        ] {
+            let err = validate_socks_proxy(addr).expect_err(addr);
+            assert!(
+                matches!(err, MawaqitError::InvalidProxy(_)),
+                "{addr:?}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn timeout_resolution_explicit_wins_proxy_raises_defaults() {
+        // defaults without a proxy
+        assert_eq!(
+            resolve_timeouts(false, None),
+            (Duration::from_secs(10), Duration::from_secs(30))
+        );
+        // a proxy raises them …
+        assert_eq!(
+            resolve_timeouts(true, None),
+            (Duration::from_secs(30), Duration::from_secs(90))
+        );
+        // … unless with_timeouts overrode them (either order)
+        let explicit = (Duration::from_secs(5), Duration::from_secs(15));
+        assert_eq!(resolve_timeouts(true, Some(explicit)), explicit);
+        assert_eq!(resolve_timeouts(false, Some(explicit)), explicit);
+    }
+
+    #[test]
+    fn builders_compose_in_any_order() {
+        // proxy first, offline layer after
+        let _a = MawaqitClient::new()
+            .with_socks_proxy("socks5h://127.0.0.1:9050")
+            .expect("valid proxy")
+            .with_disk_cache(std::env::temp_dir().join("mawaqit-proxy-a"));
+        // offline layer and explicit timeouts first, proxy last
+        let _b = MawaqitClient::with_base_urls(
+            "http://127.0.0.1:1".to_string(),
+            "http://127.0.0.1:1".to_string(),
+        )
+        .with_disk_cache(std::env::temp_dir().join("mawaqit-proxy-b"))
+        .with_timeouts(Duration::from_secs(5), Duration::from_secs(15))
+        .with_socks_proxy("socks5h://localhost")
+        .expect("valid proxy");
+    }
+
+    #[test]
+    fn invalid_proxy_fails_fast() {
+        let err = MawaqitClient::new()
+            .with_socks_proxy("socks5://127.0.0.1:9050")
+            .expect_err("plain socks5 must be rejected");
+        assert!(matches!(err, MawaqitError::InvalidProxy(_)));
     }
 
     /// Live end-to-end check against the real site (no account needed):

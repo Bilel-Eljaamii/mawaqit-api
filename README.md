@@ -32,7 +32,12 @@ async fn main() -> Result<(), mawaqit_api::MawaqitError> {
     let client = MawaqitClient::new();
 
     let mosques = client.search_mosques("Paris").await?;
-    let slug = mosques[0].mosque_id().unwrap().to_string();
+    // Search results may lack a page slug — don't index-and-unwrap.
+    let slug = mosques
+        .iter()
+        .find_map(|m| m.mosque_id())
+        .expect("search returned no slug — pick another result")
+        .to_string();
 
     // Adhan + resolved iqama for today.
     let today = client.today(&slug).await?;
@@ -54,6 +59,17 @@ let client = MawaqitClient::new()
 
 Failed fetches now fall back to the stored snapshot; successful fetches
 refresh it. `conf_data_dated` tells you which one you got.
+
+Route all traffic through Tor (or any SOCKS5 proxy) with one more builder
+call — remote DNS (`socks5h://`) is enforced, wrong schemes are rejected
+at construction, and timeouts rise for slow circuits automatically. The
+library never enables it by default and never starts a Tor daemon:
+
+```rust
+let client = MawaqitClient::new()
+    // system tor; Tor Browser users pass 9150
+    .with_socks_proxy("socks5h://127.0.0.1:9050")?;
+```
 
 ## Examples
 

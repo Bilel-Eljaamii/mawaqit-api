@@ -26,7 +26,7 @@ test-specs/
 
 | Tier | Binary | I/O | Runs by default | Count (approx.) | Spec |
 | --- | --- | --- | --- | --- | --- |
-| 0. in-module | `--lib` (`#[cfg(test)]` in `src/`) | none | yes | 28 (1 ignored live test) | summarized here |
+| 0. in-module | `--lib` (`#[cfg(test)]` in `src/`) | none | yes | 33 (1 ignored live test) | summarized here |
 | 1. unit (`ut`) | `tst/ut.rs` | none | yes | 16 (findings F4, F5, F6 pinned green) | [`ut/`](ut/corpus.md) |
 | 2. component (`ct`) | `tst/ct.rs` | local TCP + temp dirs | yes | 18 (findings F1, F2 pinned green; F3 residual) | [`ct/`](ct/hostile-http.md) |
 | 3. mutation (`fuzz`) | `tst/fuzz.rs` | temp dirs | yes | 5 (finding F10 pinned green) | [`fuzz/`](fuzz/mutation.md) |
@@ -35,8 +35,9 @@ test-specs/
 
 Tier 0 covers internals that need private access: `TtlCache` expiry
 (2), calendar row semantics (12), scraper extraction (4), snapshot
-envelope round-trips and hardening (8), `minutes_between` wrap (1), plus
-one `#[ignore]`d live search+calendar smoke in `client.rs`.
+envelope round-trips and hardening (8), `minutes_between` wrap (1),
+SOCKS5 proxy validation, timeout policy and builder composition (5),
+plus one `#[ignore]`d live search+calendar smoke in `client.rs`.
 
 ## Run matrix
 

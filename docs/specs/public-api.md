@@ -25,6 +25,8 @@ methods are `async` and safe to share across tasks.
 | `month(&self, mosque_id: &str, month: u32)` | `Result<MonthTimes>` | Adhan times for every valid day of month 1–12. |
 | `month_iqama(&self, mosque_id: &str, month: u32)` | `Result<MonthIqamaTimes>` | Resolved iqama for the month (needs both calendars). |
 | `invalidate(&self, mosque_id: Option<&str>)` | `()` | Drop one page cache entry, or all of them on `None`. |
+| `with_socks_proxy(self, addr: impl Into<String>)` | `Result<Self>` *(0.3.0)* | Chainable Tor opt-in: route all traffic through a SOCKS5 proxy with remote DNS. Address must be `socks5h://host[:port]` (missing port ⇒ 9050); anything else ⇒ `InvalidProxy` before any network use. Raises timeouts to 30 s / 90 s unless `with_timeouts` overrode them. Never enabled by default; never spawns a Tor daemon. |
+| `with_timeouts(self, connect: Duration, request: Duration)` | `Self` *(0.3.0)* | Chainable transport-timeout override; composes with `with_socks_proxy` in any order. |
 
 ## Free functions
 
@@ -96,12 +98,13 @@ available.
 | `InvalidMonth` | `u32` | month outside 1–12 |
 | `NoCalendar` | — | `calendar` missing/empty, or the requested day absent from it |
 | `Api` | `status: u16, url` | any other non-success HTTP status |
+| `InvalidProxy` | message *(0.3.0)* | `with_socks_proxy` got an address that is not `socks5h://host[:port]` — wrong scheme (`socks5`/http(s)/none), empty host, path/query/fragment, or unparseable |
 | `Parse` | message | invalid JSON, non-UTF-8 body, response over the 20 MB cap, `times` < 5 entries, malformed calendar rows surfaced through month extraction |
 
 Retry guidance (used by `examples/error_recovery.rs`): `Http` and `Api`
-(5xx/429) are transient → retry with backoff; `MosqueNotFound` is terminal;
-`ConfDataNotFound`/`Parse` mean the site contract changed or the response is
-hostile — do not hammer.
+(5xx/429) are transient → retry with backoff; `MosqueNotFound`,
+`InvalidMonth` and `InvalidProxy` are terminal; `ConfDataNotFound`/`Parse`
+mean the site contract changed or the response is hostile — do not hammer.
 
 ## Versioning note
 
