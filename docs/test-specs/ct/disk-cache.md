@@ -51,8 +51,8 @@ its absence changes nothing else.
 
 - Envelope format, hashed filenames, atomicity:
   [`../../specs/offline-snapshots.md`](../../specs/offline-snapshots.md).
-- Unit-tier hostile-file matrix and slug-confinement matrix:
-  `src/disk.rs` `#[cfg(test)]` (round-trips, hostile contents list, slug
-  traversal, `.tmp` residue).
+- The snapshot store's own suite (round-trips, hostile contents list, slug
+  traversal, `.tmp` residue): [`disk.md`](disk.md) — `tst/ct/disk.rs`,
+  moved out of `src/disk.rs`.
 - Mutation-level snapshot fuzzing:
   [`../fuzz/mutation.md`](../fuzz/mutation.md).

@@ -120,6 +120,26 @@ All build steps live in the [`justfile`](justfile) — install `just` with
 | `just graph` | GitNexus graph change analysis (required before committing) |
 | `just clean` | remove build artifacts |
 
+## Adhan voices
+
+The mosque-screen adhan recordings are served keylessly from Mawaqit's CDN.
+The catalog (Makkah, Madinah, Al-Aqsa/Qods, Algeria, Egypt — plus Fajr
+variants) and the downloader live here:
+
+```rust
+use mawaqit_api::{ADHAN_VOICES, adhan_voice_url, download_voice};
+
+for voice in &ADHAN_VOICES {
+    println!("{} -> {}", voice.name, adhan_voice_url(voice.id).unwrap());
+}
+
+let path = download_voice(&client, "adhan-quds", &cache_dir).await?;
+```
+
+Downloads are capped (8 MB), atomic, cached (a second call is a no-op), and
+routed through the client's transport — a proxy (Tor) applies. The mosque's
+own choice is available via `voice_id_from_conf(&conf_data)`.
+
 ## Tests
 
 Integration tests live in `tst/` as a four-tier pyramid — one binary per

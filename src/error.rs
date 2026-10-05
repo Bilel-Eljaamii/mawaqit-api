@@ -28,6 +28,9 @@ pub enum MawaqitError {
     #[error("invalid SOCKS5 proxy address: {0}")]
     InvalidProxy(String),
 
+    #[error("invalid adhan voice: {0}")]
+    InvalidVoice(String),
+
     #[error("malformed payload: {0}")]
     Parse(String),
 }

@@ -42,9 +42,12 @@ tst/
   (`#![allow(dead_code)]`).
 - The `#[path]` wiring (`#[path = "ut/corpus.rs"] mod corpus;`) keeps the
   directory structure without cargo's implicit `tests/` file-mapping rules.
-- In-module `#[cfg(test)]` unit tests in `src/` are tier 0 — they test
-  internals (cache expiry, row shapes, envelope round-trips) that need
-  private access and run with `cargo test --lib`.
+- `src/` carries no `#[cfg(test)]` code (changed 2026-10-05): the former
+  tier-0 in-module suites moved into the pyramid — cache, calendar,
+  client helpers and scraper into `ut/`, the disk store into `ct/`, the
+  live smoke into `e2e/` — re-expressed through the public API.
+  `TtlCache` is `#[doc(hidden)]` public purely so its tests live in
+  `tst/ut/cache.rs`; it stays out of the semver surface.
 - Tier gates: **ut + ct + fuzz are offline and deterministic** and gate
   every commit (`cargo test`, `just verify`). **e2e hits the live site**
   and is `#[ignore]`d (run via `just live`).

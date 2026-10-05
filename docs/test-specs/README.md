@@ -8,12 +8,18 @@ code:
 test-specs/
 ├── README.md            this file — pyramid, run matrix, findings ledger
 ├── ut/                  unit tier (tst/ut.rs)      — pure, no I/O
+│   ├── cache.md         in-process TTL cache (doc-hidden internal)
+│   ├── calendar.md      calendar pipeline through the public API
+│   ├── client.md        helpers + SOCKS5 validation via public builders
+│   ├── scraper.md       page extraction via parse_page
 │   ├── corpus.md        hostile corpus for parse_page
 │   └── semantics.md     valid-JSON semantic attacks + contract pins
 ├── ct/                  component tier (tst/ct.rs) — local mocks only
 │   ├── hostile-http.md  client vs lying raw-TCP server
-│   └── disk-cache.md    offline snapshot store/load/fallback contract
+│   ├── disk-cache.md    offline snapshot store/load/fallback contract
+│   └── disk.md          the snapshot store itself on real files
 ├── e2e/                 end-to-end tier (tst/e2e.rs) — live site
+│   ├── smoke.md         fast single-mosque live check
 │   └── world-tour.md    100+ real mosques, structural invariants
 ├── fuzz/                fuzz tier (tst/fuzz.rs) + nightly campaign
 │   ├── mutation.md      deterministic seed-driven mutation fuzzer
@@ -26,18 +32,18 @@ test-specs/
 
 | Tier | Binary | I/O | Runs by default | Count (approx.) | Spec |
 | --- | --- | --- | --- | --- | --- |
-| 0. in-module | `--lib` (`#[cfg(test)]` in `src/`) | none | yes | 33 (1 ignored live test) | summarized here |
-| 1. unit (`ut`) | `tst/ut.rs` | none | yes | 16 (findings F4, F5, F6 pinned green) | [`ut/`](ut/corpus.md) |
-| 2. component (`ct`) | `tst/ct.rs` | local TCP + temp dirs | yes | 18 (findings F1, F2 pinned green; F3 residual) | [`ct/`](ct/hostile-http.md) |
+| 1. unit (`ut`) | `tst/ut.rs` | none | yes | 47 (findings F4–F6, C1, M1 pinned green) | [`ut/`](ut/corpus.md) |
+| 2. component (`ct`) | `tst/ct.rs` | local TCP + temp dirs | yes | 26 (findings F1–F3, F10 pinned green) | [`ct/`](ct/hostile-http.md) |
 | 3. mutation (`fuzz`) | `tst/fuzz.rs` | temp dirs | yes | 5 (finding F10 pinned green) | [`fuzz/`](fuzz/mutation.md) |
-| 4. end-to-end (`e2e`) | `tst/e2e.rs` | **live mawaqit.net** | `#[ignore]`d | 1 | [`e2e/world-tour.md`](e2e/world-tour.md) |
+| 4. end-to-end (`e2e`) | `tst/e2e.rs` | **live mawaqit.net** | `#[ignore]`d | 2 (smoke + world tour) | [`e2e/`](e2e/smoke.md) |
 | 5. libFuzzer campaign | `fuzz/` (cargo-fuzz) | none | nightly/manual | 2 targets | [`fuzz/libfuzzer-campaign.md`](fuzz/libfuzzer-campaign.md) |
 
-Tier 0 covers internals that need private access: `TtlCache` expiry
-(2), calendar row semantics (12), scraper extraction (4), snapshot
-envelope round-trips and hardening (8), `minutes_between` wrap (1),
-SOCKS5 proxy validation, timeout policy and builder composition (5),
-plus one `#[ignore]`d live search+calendar smoke in `client.rs`.
+`src/` carries no `#[cfg(test)]` code: every test lives in the pyramid.
+Suites moved out of `src/` (cache, calendar, client helpers, scraper,
+disk store) run through the public API; `TtlCache` is `#[doc(hidden)]`
+public purely for that purpose and stays out of the semver surface.
+The private `resolve_timeouts` matrix was the one casualty — documented
+behavior, not publicly assertable.
 
 ## Run matrix
 

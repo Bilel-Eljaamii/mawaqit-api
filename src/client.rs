@@ -59,6 +59,8 @@ struct Inner {
     http: reqwest::Client,
     api_base: String,
     site_base: String,
+    /// Adhan-voice CDN root (`voices.rs`). Overridable for tests.
+    cdn_base: String,
     pages: TtlCache<Arc<ConfData>>,
     searches: TtlCache<Vec<Mosque>>,
     /// Construction knobs, retained so the chainable builders
@@ -81,8 +83,15 @@ impl MawaqitClient {
     /// Same client against custom base URLs — the seam the hostile HTTP
     /// tests use to point the client at a local mock server.
     pub fn with_base_urls(api_base: String, site_base: String) -> Self {
-        Self::from_parts(api_base, site_base, None, None, None)
-            .expect("default construction cannot fail: no proxy to configure")
+        Self::from_parts(
+            api_base,
+            site_base,
+            crate::voices::CDN_URL_BASE.to_string(),
+            None,
+            None,
+            None,
+        )
+        .expect("default construction cannot fail: no proxy to configure")
     }
 
     /// Single construction path: every builder funnels here so base URLs,
@@ -92,6 +101,7 @@ impl MawaqitClient {
     fn from_parts(
         api_base: String,
         site_base: String,
+        cdn_base: String,
         disk: Option<Arc<PathBuf>>,
         proxy: Option<String>,
         explicit_timeouts: Option<(Duration, Duration)>,
@@ -117,12 +127,41 @@ impl MawaqitClient {
                 http,
                 api_base,
                 site_base,
+                cdn_base,
                 pages: TtlCache::new(CONF_TTL, MAX_CACHED_PAGES),
                 searches: TtlCache::new(SEARCH_TTL, MAX_CACHED_SEARCHES),
                 proxy,
                 explicit_timeouts,
             }),
             disk,
+        })
+    }
+
+    /// Raw GET through this client's HTTP stack (proxy, timeouts, UA) —
+    /// the seam the voice downloader uses.
+    pub(crate) fn get(&self, url: &str) -> reqwest::RequestBuilder {
+        self.inner.http.get(url)
+    }
+
+    /// Override the adhan-voice CDN root (default `https://cdn.mawaqit.net`)
+    /// — the seam the voice tests use. Composes with every other builder.
+    pub fn with_cdn_base(self, url: String) -> Self {
+        Self::from_parts(
+            self.inner.api_base.clone(),
+            self.inner.site_base.clone(),
+            url,
+            self.disk.clone(),
+            self.inner.proxy.clone(),
+            self.inner.explicit_timeouts,
+        )
+        .expect("rebuilding with an already-validated proxy cannot fail")
+    }
+
+    /// The CDN URL for a catalog voice, honoring this client's CDN base.
+    /// Unknown ids are rejected (see [`crate::voices::adhan_voice_url`]).
+    pub fn voice_url(&self, id: &str) -> Option<String> {
+        crate::voices::adhan_voice_url(id).map(|u| {
+            u.replace(crate::voices::CDN_URL_BASE, &self.inner.cdn_base)
         })
     }
 
@@ -150,6 +189,7 @@ impl MawaqitClient {
         Self::from_parts(
             self.inner.api_base.clone(),
             self.inner.site_base.clone(),
+            self.inner.cdn_base.clone(),
             self.disk.clone(),
             Some(proxy),
             self.inner.explicit_timeouts,
@@ -164,6 +204,7 @@ impl MawaqitClient {
         Self::from_parts(
             self.inner.api_base.clone(),
             self.inner.site_base.clone(),
+            self.inner.cdn_base.clone(),
             self.disk.clone(),
             self.inner.proxy.clone(),
             Some((connect, request)),
@@ -435,141 +476,4 @@ pub fn minutes_between(a: &str, b: &str) -> Option<i64> {
     let b = calendar::parse_hhmm(b)?;
     let diff = (b - a).num_minutes();
     Some(if diff < 0 { diff + 24 * 60 } else { diff })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn minutes_between_handles_wrap() {
-        assert_eq!(minutes_between("10:00", "10:30"), Some(30));
-        assert_eq!(minutes_between("23:30", "00:10"), Some(40));
-    }
-
-    #[test]
-    fn slug_length_is_bounded() {
-        // review M1: an all-lowercase blob used to be "valid" at any size
-        assert!(is_valid_slug(&"a".repeat(128)));
-        assert!(!is_valid_slug(&"a".repeat(129)));
-        assert!(!is_valid_slug(&"x".repeat(100_000)));
-    }
-
-    // ------------------------------------------------- SOCKS5/Tor proxy
-
-    #[test]
-    fn proxy_validation_accepts_socks5h_and_defaults_the_port() {
-        let cases = [
-            ("socks5h://127.0.0.1", "127.0.0.1", Some(9050)), // system tor
-            ("socks5h://127.0.0.1:9050", "127.0.0.1", Some(9050)),
-            ("socks5h://localhost:9150", "localhost", Some(9150)), /* Tor Browser */
-            ("socks5h://[::1]:9050", "[::1]", Some(9050)),
-            ("socks5h://user:pass@host:1080", "host", Some(1080)),
-        ];
-        for (addr, host, port) in cases {
-            let validated = validate_socks_proxy(addr).expect(addr);
-            let url = reqwest::Url::parse(&validated).expect("canonical URL");
-            assert_eq!(url.scheme(), "socks5h", "{addr:?}");
-            assert_eq!(url.host_str(), Some(host), "{addr:?}");
-            assert_eq!(url.port(), port, "{addr:?}");
-        }
-    }
-
-    #[test]
-    fn proxy_validation_rejects_everything_that_is_not_socks5h() {
-        for addr in [
-            "",
-            "   ",
-            "garbage",
-            "127.0.0.1:9050",          // no scheme
-            "socks5://127.0.0.1:9050", // local DNS — defeats Tor
-            "http://127.0.0.1:8080",
-            "https://127.0.0.1:443",
-            "ftp://host",
-            "socks5h://", // empty host
-            "socks5h://host:9050/path",
-            "socks5h://host/?x=1",
-            "socks5h://host#frag",
-        ] {
-            let err = validate_socks_proxy(addr).expect_err(addr);
-            assert!(
-                matches!(err, MawaqitError::InvalidProxy(_)),
-                "{addr:?}: {err}"
-            );
-        }
-    }
-
-    #[test]
-    fn timeout_resolution_explicit_wins_proxy_raises_defaults() {
-        // defaults without a proxy
-        assert_eq!(
-            resolve_timeouts(false, None),
-            (Duration::from_secs(10), Duration::from_secs(30))
-        );
-        // a proxy raises them …
-        assert_eq!(
-            resolve_timeouts(true, None),
-            (Duration::from_secs(30), Duration::from_secs(90))
-        );
-        // … unless with_timeouts overrode them (either order)
-        let explicit = (Duration::from_secs(5), Duration::from_secs(15));
-        assert_eq!(resolve_timeouts(true, Some(explicit)), explicit);
-        assert_eq!(resolve_timeouts(false, Some(explicit)), explicit);
-    }
-
-    #[test]
-    fn builders_compose_in_any_order() {
-        // proxy first, offline layer after
-        let _a = MawaqitClient::new()
-            .with_socks_proxy("socks5h://127.0.0.1:9050")
-            .expect("valid proxy")
-            .with_disk_cache(std::env::temp_dir().join("mawaqit-proxy-a"));
-        // offline layer and explicit timeouts first, proxy last
-        let _b = MawaqitClient::with_base_urls(
-            "http://127.0.0.1:1".to_string(),
-            "http://127.0.0.1:1".to_string(),
-        )
-        .with_disk_cache(std::env::temp_dir().join("mawaqit-proxy-b"))
-        .with_timeouts(Duration::from_secs(5), Duration::from_secs(15))
-        .with_socks_proxy("socks5h://localhost")
-        .expect("valid proxy");
-    }
-
-    #[test]
-    fn invalid_proxy_fails_fast() {
-        let err = MawaqitClient::new()
-            .with_socks_proxy("socks5://127.0.0.1:9050")
-            .expect_err("plain socks5 must be rejected");
-        assert!(matches!(err, MawaqitError::InvalidProxy(_)));
-    }
-
-    /// Live end-to-end check against the real site (no account needed):
-    /// `cargo test -p mawaqit-api -- --ignored --nocapture`
-    #[tokio::test]
-    #[ignore = "hits the live mawaqit.net site"]
-    async fn live_search_and_calendar() {
-        let client = MawaqitClient::new();
-        let mosques = client.search_mosques("Paris").await.expect("search");
-        println!("search hits: {}", mosques.len());
-        assert!(!mosques.is_empty(), "expected at least one mosque");
-
-        let slug = mosques
-            .iter()
-            .find_map(|m| m.mosque_id())
-            .expect("a mosque with a slug")
-            .to_string();
-        println!("mosque: {} ({slug})", mosques[0].display_name());
-
-        let today = client.today(&slug).await.expect("today");
-        println!(
-            "fajr={} shurouq={} isha={}",
-            today.adhan.fajr, today.adhan.shurouq, today.adhan.isha
-        );
-        if let Some(iq) = &today.iqama {
-            println!("iqama: {:?}", iq);
-        }
-
-        let month = client.month(&slug, 1).await.expect("month");
-        assert!(!month.days.is_empty());
-    }
 }

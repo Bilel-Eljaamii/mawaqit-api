@@ -9,6 +9,16 @@
 //!
 //! (or `just live`)
 
+//! - [`smoke`] — the fast single-mosque live check: search → today → month.
+//! - [`world_tour`] — 100+ real mosques across five continents, hard-fails on
+//!   anything that would break the app.
+//!
+//! `cargo test --test e2e -- --ignored --nocapture`
+//!
+//! (or `just live`)
+
 mod common;
+#[path = "e2e/smoke.rs"]
+mod smoke;
 #[path = "e2e/world_tour.rs"]
 mod world_tour;

@@ -43,6 +43,9 @@ fn describe(err: &MawaqitError) -> &'static str {
         MawaqitError::InvalidProxy(_) => {
             "bad proxy address (needs socks5h://) — permanent, fix the URL"
         }
+        MawaqitError::InvalidVoice(_) => {
+            "unknown or oversized adhan voice — permanent, fix the id"
+        }
         MawaqitError::Parse(_) => "malformed payload — permanent",
     }
 }

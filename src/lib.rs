@@ -31,13 +31,18 @@
 //! also reports `iqama_at`, the rollover-correct instants — a "+600" after
 //! a 23:30 adhan belongs to the *next* day.
 
-mod cache;
+/// Internal in-process TTL cache. `#[doc(hidden)]`-public only so its unit
+/// tests live in `tst/ut/cache.rs`; not part of the public API, not covered
+/// by semver.
+#[doc(hidden)]
+pub mod cache;
 mod calendar;
 mod client;
 pub mod disk;
 mod error;
 mod models;
 mod scraper;
+pub mod voices;
 pub use calendar::{month_iqama_times, month_times, times_for_date};
 pub use client::{MawaqitClient, is_valid_slug, minutes_between, page_url};
 pub use error::{MawaqitError, Result};
@@ -50,3 +55,7 @@ pub use models::{
 /// and fuzzing; [`MawaqitClient::conf_data`] is the network-backed
 /// wrapper.
 pub use scraper::extract_conf_data as parse_page;
+pub use voices::{
+    ADHAN_VOICES, AdhanVoice, adhan_voice_url, download_voice,
+    voice_id_from_conf,
+};
