@@ -54,6 +54,7 @@ behavior, not publicly assertable.
 | `cargo test -- --ignored` | **live tiers only** (world tour + live search smoke) | pre-release / HIL, needs network |
 | `just live` | the e2e world tour | pre-release, network, minutes |
 | `just fuzz parse_page 60` | one cargo-fuzz target for 60 s | nightly / on parser changes |
+| `just coverage` | the offline suite under LLVM coverage (HTML + lcov report) | nightly / on demand |
 
 Shared invariant helpers live in `tst/common/mod.rs`:
 

@@ -68,6 +68,23 @@ tier tier:
 live:
     cargo test --test e2e -- --ignored --nocapture
 
+# Runs the same tests `just test` runs; the #[ignore]d live tiers are out.
+# Coverage report for the offline suite: HTML + lcov via cargo-llvm-cov.
+coverage:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v cargo-llvm-cov >/dev/null \
+        || { echo "missing cargo-llvm-cov — cargo install cargo-llvm-cov"; exit 1; }
+    rustup component list --installed 2>/dev/null | grep -q llvm-tools \
+        || { echo "missing llvm-tools — rustup component add llvm-tools-preview"; exit 1; }
+    # One instrumented test run; both reports render from the saved profile.
+    cargo llvm-cov --no-report
+    cargo llvm-cov report --html --output-dir target/coverage
+    cargo llvm-cov report --lcov --output-path target/coverage/lcov.info
+    echo
+    echo "HTML report: target/coverage/html/index.html"
+    echo "lcov trace:  target/coverage/lcov.info"
+
 # ------------------------------------------------------------ doc/fuzz ----
 
 # Build the rustdoc documentation

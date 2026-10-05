@@ -114,6 +114,7 @@ All build steps live in the [`justfile`](justfile) — install `just` with
 | `just lint` | clippy with warnings as errors |
 | `just test` | offline, deterministic suite (hostile HTTP/semantics/corpus, snapshots) |
 | `just live` | the `--ignored` live-site campaign (100+ real mosques) |
+| `just coverage` | coverage report for the offline suite (HTML + lcov via `cargo-llvm-cov`) |
 | `just doc` | rustdoc |
 | `just fuzz [target] [secs]` | cargo-fuzz wrapper for the `fuzz/` targets |
 | `just example <name>` | run one example |
@@ -163,6 +164,11 @@ The red-team findings are all fixed and pinned as always-run regression
 tests (F1 redirects, F2 hostile slugs, F4 invalid times, F5 duplicate day
 keys, F6 control characters). Only the live-site tiers stay `#[ignore]`d —
 `just live` runs them.
+
+## Changelog
+
+Notable changes per release live in [`CHANGELOG.md`](CHANGELOG.md)
+(Keep a Changelog format; semver).
 
 ## License
 
