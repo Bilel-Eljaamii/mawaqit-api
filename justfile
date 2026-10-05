@@ -86,13 +86,15 @@ tier tier:
 live:
     cargo test --test e2e -- --ignored --nocapture
 
-# Library coverage gate: HTML + lcov, src/ held at 100% line coverage.
-# Runs the same tests `just test` runs (the #[ignore]d live tiers are out;
-# test files are excluded from the report). The summary is rendered by raw
-# llvm-cov with a fixed object order — cargo-llvm-cov's own aggregate
-# miscounts functions that exist in several test binaries (each embeds the
-# lib), and the voices binary must lead the object list for the union to
-# reflect every tier's execution.
+# Library coverage gate: src/ held at 100% line coverage — the recipe
+# FAILS if any executable src/ line is not executed. Runs each offline
+# tier binary separately and checks per-binary line coverage with
+# llvm-cov show, then unions the results (a src line is at 100% when ANY
+# tier binary executed it). llvm-cov's own multi-binary report/export
+# aggregate miscounts functions that exist in several test binaries (each
+# embeds a copy of the lib), so its summary cannot be used directly; the
+# per-binary show view is exact. The #[ignore]d live tier never executes
+# and is excluded; test files are not part of the measured surface.
 coverage:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -102,39 +104,53 @@ coverage:
         || { echo "missing llvm-tools — rustup component add llvm-tools-preview"; exit 1; }
     LLCOV="$(find ~/.rustup/toolchains -name llvm-cov -path '*bin*' 2>/dev/null | head -1)"
     [ -n "$LLCOV" ] || { echo "llvm-cov binary not found — rustup component add llvm-tools-preview"; exit 1; }
-    # One instrumented run over the offline tiers; the e2e target is skipped
-    # (it runs nothing — both its tests are #[ignore]d — and its all-zero
-    # function copies would poison the union). Stale profiles from earlier
-    # builds must go too: mixing records of different function layouts makes
-    # llvm-cov's summary undercount ("mismatched data").
-    rm -f target/llvm-cov-target/*.profraw target/llvm-cov-target/*.profdata
-    cargo llvm-cov --no-report
     LPROFDATA="$(find ~/.rustup/toolchains -name llvm-profdata -path '*bin*' 2>/dev/null | head -1)"
-    "$LPROFDATA" merge -o target/llvm-cov-target/mawaqit-api.profdata \
-        target/llvm-cov-target/*.profraw
-    # Deterministic render order: the voices binary first (it exercises the
-    # async download paths no other tier runs), then the offline tiers.
-    OBJS=""
-    for tier in voices ut ct fuzz; do
-        for b in target/llvm-cov-target/debug/deps/"$tier"-*; do
-            case "$b" in *.d) ;; *) OBJS="$OBJS -object $b" ;; esac
+    [ -n "$LPROFDATA" ] || { echo "llvm-profdata binary not found"; exit 1; }
+    rm -rf target/coverage
+    mkdir -p target/coverage
+    FAIL=0
+    for tier in ut ct fuzz voices; do
+        rm -f target/llvm-cov-target/*.profraw target/llvm-cov-target/*.profdata
+        cargo llvm-cov --no-report --test "$tier"
+        bin=$(ls -t target/llvm-cov-target/debug/deps/"$tier"-* 2>/dev/null | grep -v '\.d$' | head -1)
+        [ -n "$bin" ] || { echo "missing test binary for tier: $tier"; exit 1; }
+        "$LPROFDATA" merge -o "target/coverage/prof-$tier.profdata" \
+            target/llvm-cov-target/*.profraw
+        # Per-tier uncovered executable lines (llvm-cov show is the one
+        # renderer whose per-line counts are exact for this layout). Files
+        # with no coverage mapping (declarative modules like error.rs/
+        # lib.rs — no instrumented functions) render empty and are skipped.
+        rm -f "target/coverage/uncovered-$tier.txt"
+        for f in src/*.rs; do
+            # Mapping-less files (declarative modules) can make llvm-cov
+            # show exit 1 with no output — tolerated, then skipped.
+            out="$($LLCOV show -instr-profile "target/coverage/prof-$tier.profdata" \
+                "$bin" "$f" 2>/dev/null || true)"
+            [ -n "$out" ] || { echo "  no coverage mapping: $f (skipped)"; continue; }
+            printf '%s\n' "$out" | awk -F'|' -v f="$f" \
+                'NF >= 3 && $1 ~ /^[0-9]+$/ && $2 ~ /^ *0$/ { print f ":" $1 }' \
+                >> "target/coverage/uncovered-$tier.txt"
         done
     done
-    # The gate: src/ line coverage must be exactly 100%.
-    $LLCOV report $OBJS -instr-profile target/llvm-cov-target/mawaqit-api.profdata \
-        --ignore-filename-regex '[^/]+/(tst|tests)/' | tee target/coverage/summary.txt \
-        | awk -F'|' '/^TOTAL/ { missed = $9; gsub(/ /, "", missed); if (missed + 0 > 0) { print "FAILED: " missed " uncovered lines in src/ (see per-file rows above)"; exit 1 } }'
-    mkdir -p target/coverage
-    $LLCOV show $OBJS -instr-profile target/llvm-cov-target/mawaqit-api.profdata \
-        --format=html --output-dir target/coverage/html \
-        --ignore-filename-regex '[^/]+/(tst|tests)/' >/dev/null
-    $LLCOV export $OBJS -instr-profile target/llvm-cov-target/mawaqit-api.profdata \
-        --format=lcov --ignore-filename-regex '[^/]+/(tst|tests)/' \
-        > target/coverage/lcov.info
+    # Union gate: a src line is uncovered only when NO tier binary executed
+    # it — i.e. its file:line appears in every tier's zero list.
+    missed=$(cat target/coverage/uncovered-*.txt | sort | uniq -c \
+        | awk -v tiers=4 '$1 == tiers { print "  " $2 }')
+    if [ -n "$missed" ]; then
+        echo "FAILED: src/ is not at 100% line coverage:"
+        echo "$missed"
+        exit 1
+    fi
+    rm -f target/coverage/uncovered-*.txt
+    for tier in ut ct fuzz voices; do
+        $LLCOV show -instr-profile "target/coverage/prof-$tier.profdata" \
+            $(ls -t target/llvm-cov-target/debug/deps/"$tier"-* | grep -v '\.d$' | head -1) \
+            --format=html --output-dir "target/coverage/html-$tier" \
+            --ignore-filename-regex '[^/]+/(tst|tests)/' >/dev/null
+    done
     echo
-    echo "✔ src/ line coverage: 100% (summary: target/coverage/summary.txt)"
-    echo "HTML report: target/coverage/html/index.html"
-    echo "lcov trace:  target/coverage/lcov.info"
+    echo "✔ src/ line coverage: 100% (lines uncovered in every tier binary: 0)"
+    echo "HTML reports: target/coverage/html-<tier>/index.html"
 
 # ------------------------------------------------------------ doc/fuzz ----
 
