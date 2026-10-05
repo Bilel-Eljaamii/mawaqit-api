@@ -26,6 +26,24 @@ release:
 check:
     cargo check --all-targets
 
+# Type-check the whole feature matrix, including the no_std MCU targets
+# (ADR-0013/0014). `rustup target add thumbv7em-none-eabihf
+# riscv32imc-unknown-none-elf` once; then this is cheap. This is the gate
+# that keeps the no_std docs honest — default-features-only checks cannot
+# see a broken `heapless`/`alloc` tier.
+targets-mcu:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for target in thumbv7em-none-eabihf riscv32imc-unknown-none-elf; do
+        rustup target list --installed | grep -q "^$target\$" \
+            || { echo "missing target $target — rustup target add $target"; exit 1; }
+        cargo check --target "$target" --no-default-features --features heapless
+        cargo check --target "$target" --no-default-features --features alloc
+    done
+    cargo check --no-default-features --features heapless
+    cargo check --no-default-features --features alloc
+    echo "feature matrix clean: {thumbv7em, riscv32imc, host} x {std, alloc, heapless}"
+
 # ------------------------------------------------------- format and lint ----
 
 # Format all code (nightly rustfmt — rustfmt.toml uses unstable options)
@@ -155,8 +173,9 @@ graph:
 
 # THE gate: everything that must pass before a change is done.
 # Runs in order and fails fast: format check → clippy → type check →
-# offline tests → docs → one network-free example as an end-to-end smoke.
-verify: fmt-check lint check test doc
+# no_std feature matrix → offline tests → docs → one network-free
+# example as an end-to-end smoke.
+verify: fmt-check lint check targets-mcu test doc
     just example page_scraper
     @echo
     @echo "✔ verify gate passed"

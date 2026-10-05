@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Stable toolchain plus the two no_std MCU targets the feature
+      # matrix type-checks (ADR-0013/0014).
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7em-none-eabihf,riscv32imc-unknown-none-elf
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+
+      # The full gate: fmt-check → clippy -D warnings → check →
+      # targets-mcu (3 targets x {std, alloc, heapless}) → offline tests
+      # → doc → network-free smoke example. Deliberately dependency-free
+      # (no caching actions) so the gate itself has no supply chain.
+      - name: just verify
+        run: just verify
