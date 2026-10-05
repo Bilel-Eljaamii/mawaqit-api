@@ -216,22 +216,26 @@ async fn download_fails_when_the_destination_cannot_be_created() {
     assert!(matches!(err, MawaqitError::Parse(_)), "got {err:?}");
 }
 
-/// The atomic-write tmp path is pre-occupied by a directory: the write
-/// fails, the error is surfaced as Parse and no partial file is left.
+/// The atomic-write tmp name is unique per call (the concurrent-download
+/// fix), so a stale writer's leftover at any `*.mp3.tmp-*` path — here a
+/// directory — can neither block nor poison a fresh download and stays
+/// untouched. The suffix below is out of `subsec_nanos()` range so the
+/// fresh download's own tmp name can never collide with it.
 #[tokio::test]
-async fn download_fails_when_the_tmp_path_is_a_directory() {
+async fn download_ignores_stale_tmp_artifacts() {
     let dir = temp_dir("tmp-dir");
-    std::fs::create_dir_all(dir.join("adhan-quds.mp3.tmp")).unwrap();
+    std::fs::create_dir_all(dir.join("adhan-quds.mp3.tmp-99999999999"))
+        .unwrap();
 
     let (base, _server) = spawn_mock(mp3_response(b"\xff\xfbshort"));
     let client = MawaqitClient::with_base_urls(base.clone(), base.clone())
         .with_cdn_base(base.clone());
 
-    let err = download_voice(&client, "adhan-quds", &dir).await.unwrap_err();
-    assert!(matches!(err, MawaqitError::Parse(_)), "got {err:?}");
+    let dest = download_voice(&client, "adhan-quds", &dir).await.unwrap();
+    assert!(dest.is_file(), "the download lands despite the stale artifact");
     assert!(
-        std::fs::read_dir(&dir).unwrap().count() == 1,
-        "only the blocking directory stays; no partial download file"
+        dir.join("adhan-quds.mp3.tmp-99999999999").is_dir(),
+        "the stale artifact stays untouched"
     );
 }
 
