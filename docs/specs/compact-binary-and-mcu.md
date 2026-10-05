@@ -34,12 +34,12 @@ All multi-byte integers are serialized in **little-endian** byte order.
 | `0x06` | `flags` | `u8` | Bitfield: `0x01` = `imsak_mode`, `0x02` = `has_iqama`, `0x04` = `has_jumua`, `0x08` = `fajr_relative` |
 | `0x07` | `reserved` | `u8` | Alignment padding (`0x00`) |
 | `0x08` | `start_year` | `u16` | Gregorian year of the first record (e.g. `2026`) |
-| `0x0A` | `start_day_of_year` | `u16` | 1-based day of year (1..=366) of the first record |
+| `0x0A` | `start_day_of_year` | `u16` | 1-based day of year of the first record; **must be `1..=366`** — validated before date resolution, `0` or `> 366` ⇒ `Err(InvalidDate)` (never a chrono panic) |
 | `0x0C` | `day_count` | `u16` | Total consecutive day records in payload |
 | `0x0E` | `jumua` | `u16` | Friday 1st prayer in minutes from midnight (`0xFFFF` if none) |
 | `0x10` | `jumua2` | `u16` | Friday 2nd prayer in minutes from midnight (`0xFFFF` if none) |
 | `0x12` | `pad` | `[u8; 2]` | Alignment padding (`0x00, 0x00`) |
-| `0x14` | `crc32` | `u32` | CRC-32-IEEE checksum of the header (with crc32=0) + day records |
+| `0x14` | `crc32` | `u32` | CRC-32-IEEE over the **whole payload with bytes `0x14..0x18` zeroed** — i.e. compute over header-with-zeroed-CRC plus all day records, then write the result little-endian into `0x14..0x18`. Readers must zero `0x14..0x18` before hashing; hashing the buffer with the stored CRC in place never matches |
 
 *Total header length: exactly 24 bytes (`0x18`). The first day record begins at byte offset 24.*
 
@@ -74,6 +74,28 @@ To eliminate the C1 rollover bug while maintaining strict `HH:MM` display valida
 - **Bits 0..10 (`0x07FF`)**: Wall-clock display time in minutes from midnight (`0..=1439`).
   - Accessing wall-clock display: `raw & 0x07FF` (always `< 1440`, strictly satisfies `HH:MM`).
   - Checking next-day alarm instant: `(raw & 0x8000) != 0`.
+- **Bits 12–13 (`0x3000`)**: reserved, **must be zero on the wire** (FINDING F13).
+
+**Strict decode beyond the CRC (FINDING F13).** An attacker who can write
+flash can also recompute the CRC, so validity does not end at the
+checksum. A day record is **corrupt beyond the CRC** — and its lookup
+returns `None` for that day, other days unaffected — when any of:
+
+- an adhan `u16` is `> 1439` (the field carries no flag bits; any bit ≥ 12 set, or the 1440..=2047 dead zone),
+- an iqama packed field has bits 12–13 set,
+- an iqama packed field's masked minutes exceed 1439,
+- an iqama packed field is nonzero without the `VALID` bit (e.g. a bare `ROLLOVER`).
+
+Corrupt records are **dropped, never clamped and never fabricated** —
+the same degradation semantics as a calendar-rejected day (F4). A
+clamped "23:59" out of hostile bytes would itself be fabrication.
+
+`to_hhmm()` precondition (ADR-0010 display contract): the minute value is
+`0..=1439`. Every value this module produces satisfies it (builder
+rejects larger values at pack time; decoders drop records that carry
+them). Callers hand-crafting `CompactTime` from raw wire bits must
+mask/check first, and check `is_valid()` on iqama fields before
+formatting.
 
 ---
 
@@ -100,7 +122,7 @@ Designed for constrained storage while requiring **zero heap memory and ~20 byte
 
 **Encode limits** (violations are typed pack-time errors, never wraps):
 
-- Adhan offsets are minutes-after-fajr, so the input must be ascending from fajr (`shurouq < fajr` ⇒ `DeltaOverflow`) and every value ≤ 1439 (`TimeOutOfRange`).
+- Adhan offsets are minutes-after-fajr, so the input must be ascending from fajr and every value ≤ 1439. This includes the **White-Night case** (FINDING F11): high-latitude summer calendars can wrap Isha to 00:00 — before Maghrib and Fajr — which is a *negative* offset-from-fajr and has no encoding; the packer rejects it with `DeltaOverflow { prayer: 5 }` instead of wrapping, and the direct format carries the same day explicitly.
 - Iqama offsets must fit one byte (0..=254, `0xFF` reserved for absent ⇒ `IqamaOffsetOverflow`). A rollover iqama needs `adhan + (1440 − iqama) ≤ 254` — e.g. a 23:50 adhan with a 00:10 iqama (offset 20) packs, but a 19:40 adhan with a 00:10 iqama (offset 270) must use the direct format.
 - `day_flags` has no fajr-relative byte; the field decodes as `0` in this format.
 
@@ -144,6 +166,7 @@ Given `target_date: NaiveDate`:
 2. If `delta_days < 0` or `delta_days >= day_count`: returns `None` (out of bounds — a lookup miss is `None`, not an error; there is no `DateOutOfBounds` variant).
 3. Direct format: `offset = 24 + delta_days * 24`; read the record.
 4. Fajr-relative format: `offset = 24 + delta_days * 20`; reconstruct times via base + offsets in registers. An adhan offset > 1439 (impossible from the packer, possible from crafted bytes) yields `None` rather than a fabricated time.
+5. **Corrupt-beyond-CRC records** (see the strict-decode rule above) drop the queried day as `None`; other days of the same payload stay queryable.
 
 ### 3. Display and Instant Helpers (`CompactTime`)
 

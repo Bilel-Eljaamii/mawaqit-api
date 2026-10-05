@@ -66,6 +66,9 @@ const RECORD_LEN_FAJR_REL: usize = 20;
 const TIME_MASK: u16 = 0x07FF;
 const VALID_BIT: u16 = 0x4000;
 const ROLLOVER_BIT: u16 = 0x8000;
+/// Iqama bitfield bits 12–13: reserved, must be zero on the wire. A set
+/// bit marks the record corrupt beyond the CRC (FINDING F13).
+const UNDEFINED_IQAMA_BITS: u16 = 0x3000;
 const NO_JUMUA: u16 = 0xFFFF;
 const MINUTES_PER_DAY: u16 = 1440;
 /// Delta-record iqama offset sentinel: no iqama for this prayer.
@@ -182,6 +185,14 @@ impl CompactTime {
     }
 
     /// Strict `HH:MM` of the display day with zero heap allocations.
+    ///
+    /// Precondition (ADR-0010 display contract): the minute value is
+    /// `0..=1439`. That holds for every value this module produces — the
+    /// builder rejects anything larger at pack time and the decoders drop
+    /// records that carry it (FINDING F13) — but a caller hand-crafting a
+    /// `CompactTime` from raw wire bits must apply the same mask/check
+    /// first; for iqama fields, check [`CompactTime::is_valid`] before
+    /// formatting.
     pub fn to_hhmm(&self) -> heapless::String<5> {
         let mut s = heapless::String::<5>::new();
         let _ = write!(s, "{:02}:{:02}", self.hours(), self.minutes());
@@ -390,12 +401,22 @@ impl<'a> CompactCalendarView<'a> {
         }
     }
 
+    /// Decode a direct-format record. Strict beyond the CRC (FINDING F13):
+    /// minutes ≥ 24:00, reserved bits 12–13, or a rollover bit without a
+    /// VALID bit mark the record corrupt — the day is dropped (`None`),
+    /// never clamped or fabricated (ADR-0010: degradation, never
+    /// fabrication).
     fn decode_direct(
         record: &[u8; RECORD_LEN_DIRECT],
     ) -> Option<CompactDayTimes> {
         let mut adhan = [0u16; 6];
         for (i, slot) in adhan.iter_mut().enumerate() {
             *slot = u16::from_le_bytes([record[i * 2], record[i * 2 + 1]]);
+            // Adhan fields carry no flag bits: anything ≥ 24:00 (including
+            // any bit ≥ 12) is corrupt beyond CRC.
+            if *slot > MINUTES_PER_DAY - 1 {
+                return None;
+            }
         }
         let mut iqama = [0u16; 5];
         let mut any_valid = false;
@@ -404,6 +425,12 @@ impl<'a> CompactCalendarView<'a> {
                 record[0x0C + i * 2],
                 record[0x0D + i * 2],
             ]);
+            if *slot & UNDEFINED_IQAMA_BITS != 0
+                || *slot & TIME_MASK > MINUTES_PER_DAY - 1
+                || (*slot & VALID_BIT == 0 && *slot != 0)
+            {
+                return None;
+            }
             any_valid |= *slot & VALID_BIT != 0;
         }
         Some(CompactDayTimes {

@@ -34,7 +34,7 @@ test-specs/
 
 | Tier | Binary | I/O | Runs by default | Count (approx.) | Spec |
 | --- | --- | --- | --- | --- | --- |
-| 1. unit (`ut`) | `tst/ut.rs` | none | yes | 63 (findings F4–F6, C1, M1 pinned green; MQTC contract in [`ut/compact.md`](ut/compact.md)) | [`ut/`](ut/corpus.md) |
+| 1. unit (`ut`) | `tst/ut.rs` | none | yes | 66 (findings F4–F6, C1, M1 pinned green; MQTC contract in [`ut/compact.md`](ut/compact.md)) | [`ut/`](ut/corpus.md) |
 | 2. component (`ct`) | `tst/ct.rs` | local TCP + temp dirs | yes | 26 (findings F1–F3, F10 pinned green) | [`ct/`](ct/hostile-http.md) |
 | 3. mutation (`fuzz`) | `tst/fuzz.rs` | temp dirs | yes | 6 (finding F10 pinned green; MQTC seed) | [`fuzz/`](fuzz/mutation.md) |
 | 4. end-to-end (`e2e`) | `tst/e2e.rs` | **live mawaqit.net** | `#[ignore]`d | 2 (smoke + world tour) | [`e2e/`](e2e/smoke.md) |
@@ -93,6 +93,18 @@ every `cargo test` as regression anchors; only live tiers stay `#[ignore]`d.
 | F5 | Duplicate day keys yield multiple days | ut | **Fixed** (canonical key wins) | `finding_f5_duplicate_day_keys_yield_one_day` |
 | F6 | Control/bidi chars reach display strings | ut | **Fixed** (`sanitize_text`) | `finding_f6_display_strings_carry_no_control_or_bidi_characters` |
 | F10 | Snapshot drops wire-tolerated shapes | fuzz | **Fixed** | `finding_f10_snapshot_roundtrips_wire_tolerated_shapes` |
+| F11 | Fajr-relative records wrap negative deltas (White-Night Isha at 00:00) | ut | **Fixed** (rejects with `DeltaOverflow`; direct format carries the day) | `white_night_isha_before_maghrib_is_rejected_in_fajr_relative_format` |
+| F12 | CRC scope ambiguity in the MQTC spec | docs | **Fixed** (spec states the zeroed `0x14..0x18` range explicitly; impl was always correct) | `crc_bit_flip_is_rejected_before_any_lookup` |
+| F13 | Crafted CRC-valid MQTC records with impossible minutes / reserved bits reach display as "34:07" | ut | **Fixed** (strict decode: record dropped as `None`, never clamped) | `crafted_crc_valid_records_with_impossible_times_are_dropped` |
+| F14 | Fajr-relative format loses the iqama rollover | ut | **Fixed by design** (rollover is implicit: adhan + offset ≥ 1440 ⇒ bit 15) | `fajr_relative_roundtrip_preserves_every_field` |
+| F15 | `to_hhmm()` had no bounds contract | docs | **Fixed** (precondition documented; hostile-bits scenario eliminated by F13) | `crafted_crc_valid_records_with_impossible_times_are_dropped` |
+| F16 | `start_day_of_year` = 0/367 under-specified | ut | **Fixed** (`1..=366` guard before chrono; spec states it) | `start_day_of_year_bounds_are_rejected_with_valid_crc` |
+
+Round-2 QE review (2026-10-05, tracked in
+[GitHub issue #1](https://github.com/Bilel-Eljaamii/mawaqit-api/issues/1)):
+F11–F16, all MQTC codec data-representation findings. F13 was the one
+live defect — `decode_direct` accepted impossible minutes and reserved
+bits from a CRC-valid crafted blob; strict decode now drops the record.
 
 A future finding starts as an `#[ignore]`d red test and graduates to green;
 the release-gate procedure is in

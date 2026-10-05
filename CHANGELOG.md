@@ -6,6 +6,22 @@ versioning: [semver](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Round-2 QE review findings F11–F16 on the MQTC codec (GitHub issue #1;
+  ledger in `docs/test-specs/README.md`). The one live defect — F13:
+  `decode_direct` accepted impossible minutes (1440..=2047) and reserved
+  bitfield bits 12–13 from a CRC-valid crafted blob, reaching display as
+  e.g. "34:07" — is fixed by strict decode: corrupt records drop the day
+  as `None`, never clamped or fabricated. F11 (White-Night negative
+  delta) and F14 (delta rollover) were already correct by the
+  fajr-relative design and are now pinned by tests; F12/F15/F16 tighten
+  the spec (explicit CRC zero-range, `to_hhmm` precondition,
+  `start_day_of_year` 1..=366).
+- `just coverage` failed on a fresh checkout (`tee` into a directory
+  that the recipe only created later); the `mkdir -p` now precedes the
+  report render.
+
 ### Added
 
 - `just coverage` — a hard coverage gate: one instrumented test run

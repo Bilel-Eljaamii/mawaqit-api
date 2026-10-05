@@ -389,3 +389,128 @@ fn empty_builder_yields_a_header_only_payload() {
     assert_eq!(view.day_count(), 0);
     assert!(view.times_for_date(start).is_none());
 }
+
+// ---------------------------------------------- round-2 QE review pins ----
+
+/// Re-sign a mutated payload: zero the CRC field, recompute the CRC-32 over
+/// the whole payload, write it back. The tool for crafting CRC-valid
+/// hostile blobs — an attacker who can write flash can recompute the CRC,
+/// so post-CRC strictness is what keeps crafted bytes off the display.
+fn resign(bytes: &mut [u8]) {
+    bytes[0x14..0x18].fill(0);
+    let mut hasher = crc32fast::Hasher::new();
+    hasher.update(bytes);
+    let crc = hasher.finalize();
+    bytes[0x14..0x18].copy_from_slice(&crc.to_le_bytes());
+}
+
+#[test]
+fn white_night_isha_before_maghrib_is_rejected_in_fajr_relative_format() {
+    // FINDING F11: high-latitude summer — Mawaqit can wrap Isha to 00:00,
+    // putting a "prayer" before Fajr. Fajr-relative offsets have no
+    // encoding for that: the packer must reject with a typed error, never
+    // wrap. The direct format carries the same day explicitly.
+    let start = date(2026, 6, 21);
+    let day = CompactDayInput {
+        adhan: [165, 255, 792, 1075, 1325, 0], /* 02:45 … 22:05, isha 00:00
+                                                * (wrapped) */
+        iqama: iqama([
+            (180, false),
+            (330, false),
+            (810, false),
+            (1095, false),
+            (15, false),
+        ]),
+        day_flags: 0,
+    };
+
+    let mut b = CompactCalendarBuilder::new(start, ScopeType::Week, true);
+    b.push_day(day);
+    assert!(matches!(
+        b.to_bytes(),
+        Err(CompactError::DeltaOverflow { prayer: 5, delta: 165 })
+    ));
+
+    let mut b = CompactCalendarBuilder::new(start, ScopeType::Week, false);
+    b.push_day(day);
+    assert!(b.to_bytes().is_ok());
+}
+
+#[test]
+fn crafted_crc_valid_records_with_impossible_times_are_dropped() {
+    // FINDING F13: an attacker who can write flash can also recompute the
+    // CRC. Out-of-range minutes, reserved bits 12–13, and rollover-without-
+    // VALID mark the record corrupt: the day is dropped (None) — never
+    // clamped, never fabricated as "34:07" (ADR-0010).
+    let start = date(2026, 10, 5);
+    let second = date(2026, 10, 6);
+    let day1 = 24 + 24; // second direct record
+
+    // adhan dhuhr = 0xFFFF
+    let mut bytes = builder(start, 2, false).to_bytes().unwrap();
+    bytes[day1 + 4] = 0xFF;
+    bytes[day1 + 5] = 0xFF;
+    resign(&mut bytes);
+    let view = CompactCalendarView::from_bytes(&bytes).unwrap();
+    assert!(view.times_for_date(start).is_some(), "day 1 stays queryable");
+    assert!(view.times_for_date(second).is_none(), "corrupt record dropped");
+
+    // adhan dhuhr = exactly 24:00 (1440)
+    let mut bytes = builder(start, 2, false).to_bytes().unwrap();
+    bytes[day1 + 4] = 0xA0;
+    bytes[day1 + 5] = 0x05;
+    resign(&mut bytes);
+    let view = CompactCalendarView::from_bytes(&bytes).unwrap();
+    assert!(view.times_for_date(second).is_none());
+
+    // iqama reserved bit 12 set (undefined bits must be zero)
+    let mut bytes = builder(start, 2, false).to_bytes().unwrap();
+    bytes[day1 + 0x0D] = 0x10; // 0x1000
+    resign(&mut bytes);
+    let view = CompactCalendarView::from_bytes(&bytes).unwrap();
+    assert!(view.times_for_date(second).is_none());
+
+    // iqama minutes in the 1440..=2047 dead zone (VALID set)
+    let mut bytes = builder(start, 2, false).to_bytes().unwrap();
+    bytes[day1 + 0x0C] = 0xA0;
+    bytes[day1 + 0x0D] = 0x45; // 0x45A0 = VALID | 1440
+    resign(&mut bytes);
+    let view = CompactCalendarView::from_bytes(&bytes).unwrap();
+    assert!(view.times_for_date(second).is_none());
+
+    // rollover bit without VALID — meaningless, dropped
+    let mut bytes = builder(start, 2, false).to_bytes().unwrap();
+    bytes[day1 + 0x0D] = 0x80; // 0x8000
+    resign(&mut bytes);
+    let view = CompactCalendarView::from_bytes(&bytes).unwrap();
+    assert!(view.times_for_date(second).is_none());
+
+    // fajr-relative: offset ≥ 1440 likewise drops the record
+    let mut rel = builder(start, 2, true).to_bytes().unwrap();
+    let rel1 = 24 + 20;
+    rel[rel1 + 2] = 0xFF;
+    rel[rel1 + 3] = 0xFF; // shurouq offset 0xFFFF
+    resign(&mut rel);
+    let view = CompactCalendarView::from_bytes(&rel).unwrap();
+    assert!(view.times_for_date(second).is_none());
+}
+
+#[test]
+fn start_day_of_year_bounds_are_rejected_with_valid_crc() {
+    // FINDING F16: start_day_of_year must be 1..=366 — validated before
+    // chrono is called, with the CRC re-signed so the date check is what
+    // fires, not the checksum.
+    let start = date(2026, 10, 5);
+    for doy in [0u16, 367, 0xFFFF] {
+        let mut bytes = builder(start, 2, false).to_bytes().unwrap();
+        bytes[0x0A..0x0C].copy_from_slice(&doy.to_le_bytes());
+        resign(&mut bytes);
+        assert!(
+            matches!(
+                CompactCalendarView::from_bytes(&bytes),
+                Err(CompactError::InvalidDate)
+            ),
+            "doy {doy} must be InvalidDate"
+        );
+    }
+}
