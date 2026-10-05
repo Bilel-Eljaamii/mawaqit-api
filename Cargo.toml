@@ -8,7 +8,7 @@ repository = "https://github.com/Bilel-Eljaamii/mawaqit-api"
 homepage = "https://github.com/Bilel-Eljaamii/mawaqit-api"
 readme = "README.md"
 keywords = ["prayer", "islamic", "adhan", "mosque", "timing"]
-categories = ["rust", "islamic", "command-line-utilities"]
+categories = ["command-line-utilities"]
 
 # Integration tests live in tst/ as a four-tier pyramid, each tier one test
 # binary with its submodules in the same-named directory (see tst/*.rs):
