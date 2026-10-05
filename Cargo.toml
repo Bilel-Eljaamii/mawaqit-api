@@ -1,6 +1,6 @@
 [package]
 name = "mawaqit-api"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 license = "MIT"
 description = "Privacy-first Rust client for Mawaqit prayer times and mosque data. No API key required, no personal data stored or sent. Includes offline disk caching, full iqama calendar resolution, adhan voice downloads, and hostile-input tested security hardening"
