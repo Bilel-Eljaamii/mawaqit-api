@@ -31,21 +31,38 @@
 //! also reports `iqama_at`, the rollover-correct instants — a "+600" after
 //! a 23:30 adhan belongs to the *next* day.
 
+#![cfg_attr(not(feature = "std"), no_std)]
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
 /// Internal in-process TTL cache. `#[doc(hidden)]`-public only so its unit
 /// tests live in `tst/ut/cache.rs`; not part of the public API, not covered
 /// by semver.
 #[doc(hidden)]
+#[cfg(feature = "std")]
 pub mod cache;
+#[cfg(any(feature = "std", feature = "alloc"))]
 mod calendar;
 mod client;
+#[cfg(feature = "std")]
 pub mod disk;
 mod error;
+#[cfg(any(feature = "std", feature = "alloc"))]
 mod models;
+#[cfg(any(feature = "std", feature = "alloc"))]
 mod scraper;
+#[cfg(feature = "heapless")]
+pub mod compact;
 pub mod voices;
+
+#[cfg(any(feature = "std", feature = "alloc"))]
 pub use calendar::{month_iqama_times, month_times, times_for_date};
-pub use client::{MawaqitClient, is_valid_slug, minutes_between, page_url};
+#[cfg(feature = "std")]
+pub use client::MawaqitClient;
+#[cfg(any(feature = "std", feature = "alloc"))]
+pub use client::{is_valid_slug, minutes_between, page_url};
 pub use error::{MawaqitError, Result};
+#[cfg(any(feature = "std", feature = "alloc"))]
 pub use models::{
     Announcement, ConfData, DailyIqamaInstants, DailyIqamaTimes,
     DailyPrayerTimes, DayIqamaTimes, DayTimes, MonthIqamaTimes, MonthTimes,
@@ -54,8 +71,10 @@ pub use models::{
 /// Parse a mosque page's HTML into its [`ConfData`] — exposed for tests
 /// and fuzzing; [`MawaqitClient::conf_data`] is the network-backed
 /// wrapper.
+#[cfg(any(feature = "std", feature = "alloc"))]
 pub use scraper::extract_conf_data as parse_page;
-pub use voices::{
-    ADHAN_VOICES, AdhanVoice, adhan_voice_url, download_voice,
-    voice_id_from_conf,
-};
+pub use voices::{ADHAN_VOICES, AdhanVoice, adhan_voice_url, voice_id_from_conf};
+#[cfg(feature = "std")]
+pub use voices::download_voice;
+#[cfg(feature = "heapless")]
+pub use compact::*;
