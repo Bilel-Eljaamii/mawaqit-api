@@ -12,8 +12,15 @@
 //!
 //! `cargo test -p mawaqit-api --test fuzz` (offline, fast, CI-safe).
 
-use chrono::Datelike;
-use mawaqit_api::{ConfData, Mosque, disk, page_url, parse_page};
+use chrono::{Datelike, Days, NaiveDate};
+use mawaqit_api::{
+    ConfData, Mosque,
+    compact::{
+        CompactCalendarBuilder, CompactCalendarView, CompactDayInput,
+        CompactIqamaInput, ScopeType,
+    },
+    disk, page_url, parse_page,
+};
 use serde_json::json;
 
 use crate::common::{dig, temp_dir};
@@ -134,6 +141,50 @@ fn snapshot_seed(dir: &std::path::Path, slug: &str) -> Vec<u8> {
 }
 
 // --------------------------------------------------------------------- tests
+
+/// A valid 7-day direct-format MQTC payload — the codec's mutation seed.
+fn mqtc_seed() -> Vec<u8> {
+    let start = NaiveDate::from_ymd_opt(2026, 10, 5).expect("seed date");
+    let mut b = CompactCalendarBuilder::new(start, ScopeType::Week, false);
+    for i in 0..7u16 {
+        b.push_day(CompactDayInput {
+            adhan: [330 + i, 450 + i, 780 + i, 990 + i, 1140 + i, 1260 + i],
+            iqama: [
+                Some(CompactIqamaInput { minutes: 345 + i, rollover: false }),
+                None,
+                Some(CompactIqamaInput { minutes: 795 + i, rollover: false }),
+                Some(CompactIqamaInput { minutes: 1005 + i, rollover: false }),
+                Some(CompactIqamaInput { minutes: 10, rollover: true }),
+            ],
+            day_flags: 0,
+        });
+    }
+    b.to_bytes().expect("seed packs")
+}
+
+#[test]
+fn fuzz_mqtc_payload_never_panics() {
+    let seed = mqtc_seed();
+    for_each_mutation(&[&seed], 2500, |bytes| {
+        // Total parsing: Ok or Err, never a panic (global invariant #1).
+        if let Ok(view) = CompactCalendarView::from_bytes(bytes) {
+            // A payload that loads must answer every in-range day, and any
+            // surfaced adhan time keeps the display ranges even when the
+            // bytes were mutated before the CRC let them through.
+            if let Ok(start) = view.start_date() {
+                for i in 0..view.day_count() {
+                    if let Some(day) =
+                        view.times_for_date(start + Days::new(i as u64))
+                    {
+                        for t in [day.adhan.fajr, day.adhan.isha] {
+                            assert!(t.hours() < 24 && t.minutes() < 60);
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
 
 #[test]
 fn fuzz_search_response_parsing_never_panics() {

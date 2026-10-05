@@ -563,14 +563,13 @@ impl CompactCalendarBuilder {
         self.days.is_empty()
     }
 
-    fn validate_and_encode_day(
-        &self,
+    /// Encode one day as a direct-format record. The direct format carries
+    /// every wall-clock value and the rollover bit explicitly, so its only
+    /// invariants are the `0..=1439` ranges — no ordering, no offset limit.
+    fn encode_day_direct(
         day: &CompactDayInput,
-    ) -> Result<
-        ([u8; RECORD_LEN_DIRECT], [u8; RECORD_LEN_FAJR_REL]),
-        CompactError,
-    > {
-        let mut direct = [0u8; RECORD_LEN_DIRECT];
+    ) -> Result<[u8; RECORD_LEN_DIRECT], CompactError> {
+        let mut record = [0u8; RECORD_LEN_DIRECT];
         for (i, &mins) in day.adhan.iter().enumerate() {
             if mins > MINUTES_PER_DAY - 1 {
                 return Err(CompactError::TimeOutOfRange {
@@ -578,11 +577,38 @@ impl CompactCalendarBuilder {
                     minutes: mins,
                 });
             }
-            direct[i * 2..i * 2 + 2].copy_from_slice(&mins.to_le_bytes());
+            record[i * 2..i * 2 + 2].copy_from_slice(&mins.to_le_bytes());
         }
-        let mut fajr_rel = [0u8; RECORD_LEN_FAJR_REL];
+        for (i, entry) in day.iqama.iter().enumerate() {
+            let Some(entry) = entry else {
+                continue; // absent iqama stays 0x0000 (VALID bit unset)
+            };
+            let adhan_slot = CompactCalendarView::IQAMA_SLOTS[i];
+            if entry.minutes > MINUTES_PER_DAY - 1 {
+                return Err(CompactError::TimeOutOfRange {
+                    prayer: adhan_slot as u8,
+                    minutes: entry.minutes,
+                });
+            }
+            let packed =
+                CompactTime::packed_iqama(entry.minutes, entry.rollover);
+            record[0x0C + i * 2..0x0C + i * 2 + 2]
+                .copy_from_slice(&packed.to_le_bytes());
+        }
+        record[0x16] = day.day_flags;
+        Ok(record)
+    }
+
+    /// Encode one day as a fajr-relative record: adhan times as offsets
+    /// from fajr (u16), iqama as minutes-after-adhan (u8, `0xFF` = absent).
+    /// Its invariants are the direct ones plus: ascending adhan (a negative
+    /// gap has no encoding) and iqama offsets within one byte.
+    fn encode_day_fajr_rel(
+        day: &CompactDayInput,
+    ) -> Result<[u8; RECORD_LEN_FAJR_REL], CompactError> {
+        let mut record = [0u8; RECORD_LEN_FAJR_REL];
         let fajr = day.adhan[0];
-        fajr_rel[0x00..0x02].copy_from_slice(&fajr.to_le_bytes());
+        record[0x00..0x02].copy_from_slice(&fajr.to_le_bytes());
         for i in 1..6 {
             let offset = day.adhan[i] as i32 - fajr as i32;
             // Non-ascending input (e.g. shurouq before fajr) has no
@@ -593,25 +619,21 @@ impl CompactCalendarBuilder {
                     delta: offset.unsigned_abs() as u16,
                 });
             }
-            fajr_rel[i * 2..i * 2 + 2]
+            record[i * 2..i * 2 + 2]
                 .copy_from_slice(&(offset as u16).to_le_bytes());
         }
         for (i, entry) in day.iqama.iter().enumerate() {
-            let adhan_slot = CompactCalendarView::IQAMA_SLOTS[i];
             let Some(entry) = entry else {
-                fajr_rel[0x0C + i] = NO_IQAMA_OFFSET;
+                record[0x0C + i] = NO_IQAMA_OFFSET;
                 continue;
             };
+            let adhan_slot = CompactCalendarView::IQAMA_SLOTS[i];
             if entry.minutes > MINUTES_PER_DAY - 1 {
                 return Err(CompactError::TimeOutOfRange {
                     prayer: adhan_slot as u8,
                     minutes: entry.minutes,
                 });
             }
-            let packed =
-                CompactTime::packed_iqama(entry.minutes, entry.rollover);
-            direct[0x0C + i * 2..0x0C + i * 2 + 2]
-                .copy_from_slice(&packed.to_le_bytes());
             let adhan_min = day.adhan[adhan_slot] as i32;
             let abs = if entry.rollover {
                 entry.minutes as i32 + MINUTES_PER_DAY as i32
@@ -625,10 +647,9 @@ impl CompactCalendarBuilder {
                     delta: offset.unsigned_abs() as u16,
                 });
             }
-            fajr_rel[0x0C + i] = offset as u8;
+            record[0x0C + i] = offset as u8;
         }
-        direct[0x16] = day.day_flags;
-        Ok((direct, fajr_rel))
+        Ok(record)
     }
 
     /// Serialize the MQTC v1 payload: 24-byte header (CRC-32-IEEE over the
@@ -683,9 +704,11 @@ impl CompactCalendarBuilder {
         out.extend_from_slice(&header);
 
         for day in &self.days {
-            let (direct, fajr_rel) = self.validate_and_encode_day(day)?;
-            let record: &[u8] =
-                if self.fajr_relative { &fajr_rel } else { &direct };
+            let record: &[u8] = if self.fajr_relative {
+                &Self::encode_day_fajr_rel(day)?
+            } else {
+                &Self::encode_day_direct(day)?
+            };
             out.extend_from_slice(record);
         }
 

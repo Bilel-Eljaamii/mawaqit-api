@@ -9,6 +9,9 @@
 //!   + `dropped` reporting, iqama resolution, rollover instants.
 //! - [`client`] — pure helper contracts: `minutes_between`, slug bounds, SOCKS5
 //!   proxy validation through the public builders.
+//! - [`compact`] — the MQTC codec: roundtrips in both record formats,
+//!   CRC/hostile-input rejection (never panic), rollover bitfield, Jumu'ah
+//!   header, year boundaries, payload emitters.
 //! - [`scraper`] — page → confData extraction on synthetic pages.
 //! - [`corpus`] — hostile corpus for `parse_page`: truncations, byte flips,
 //!   lookalike assignments, oversized/unicode torture. Nothing may panic.
@@ -27,6 +30,8 @@ mod calendar;
 #[path = "ut/client.rs"]
 mod client;
 mod common;
+#[path = "ut/compact.rs"]
+mod compact;
 #[path = "ut/corpus.rs"]
 mod corpus;
 #[path = "ut/scraper.rs"]
