@@ -1,0 +1,45 @@
+@startuml confdata-parsing-pipeline
+title confData extraction pipeline (specs/confdata-wire-format.md, ADR-0002)
+start
+:page HTML (≤ 1 MiB, UTF-8);
+note right
+  Mentions are skipped, not fatal — a page can discuss confData in code
+  and still parse. The first mention that yields a balanced literal wins.
+end note
+repeat
+  :scan for next "confData" marker;
+  if (next non-ws char is '=') then (no — mention: ===, .foo, log…)
+  else (yes)
+    if (starts with '{') then (no)
+    else (yes)
+      :balanced-brace scan\n(string- & escape-aware);
+      if (literal balanced?) then (no — abandon mention)
+      else (yes)
+        :serde_json::from_str (128-level depth limit);
+        if (invalid JSON?) then (yes)
+          #FFDDDD:Err(Parse);
+          stop
+        else (Value)
+          :build ConfData field-by-field;
+          if (times ≥ 5 strings?) then (no)
+            #FFDDDD:Err(Parse);
+            stop
+          else (yes)
+            if (calendar shape ok?) then (no)
+              #FFDDDD:Err(NoCalendar);
+              stop
+            else (yes)
+              :imsak_mode = (times.len() == 6)\ncollapse non-string display fields to None\ndrop unparseable announcements\nkeep raw verbatim;
+              #DDFFDD:Ok(ConfData);
+              stop
+            endif
+          endif
+        endif
+      endif
+    endif
+  endif
+backward :skip mention;
+repeat while (more mentions?) is (yes)
+#FFDDDD:Err(ConfDataNotFound);
+stop
+@enduml

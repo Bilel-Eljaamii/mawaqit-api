@@ -31,6 +31,48 @@ versioning: [semver](https://semver.org/).
   into equivalent always-executed forms (cache mutex-poison guard, voice
   default-port arm, snapshot parent handling).
 
+## [0.4.2] - 2026-10-05
+
+### Added
+
+- The `no_std`/MCU architecture ADR-0013 promised, implemented
+  (ADR-0014): `src/compact.rs` — the `MQTC` v1 binary codec with a
+  zero-alloc `CompactCalendarView` (O(1) flash reads, CRC-32-IEEE, C1
+  rollover bitfield, Jumu'ah header, direct + fajr-relative records) and
+  the alloc-side `CompactCalendarBuilder` emitting `.bin` / `.rs` / `.h`.
+- `examples/pack_for_mcu` — the pre-flash packer: `--slug`/`--file`,
+  `--scope week|months|year`, `--compress none|delta`,
+  `--format rust|bin|c`, `--clamp` (Dec 31 rule), and a refuse-to-emit
+  contract (every payload passes `from_bytes` before it is written).
+- Domain-core modules `src/time.rs` and `src/slug.rs`: `is_valid_slug`
+  and `minutes_between` now reach the `heapless` tier as ADR-0013
+  promised.
+- `just targets-mcu` — the feature matrix {thumbv7em-none-eabihf,
+  riscv32imc-unknown-none-elf, host} × {std, alloc, heapless} is
+  type-checked inside `just verify`; GitHub Actions runs the gate on
+  push/PR (the repo had no CI).
+- 13-test MQTC suite in `tst/ut/compact.rs` + a mutation-fuzz seed;
+  test spec at `docs/test-specs/ut/compact.md`.
+- All 8 architecture diagrams converted from Mermaid-in-Markdown to
+  PlantUML sources (`docs/diagrams/*.puml`), plus three new MCU/MQTC
+  diagrams (ADR-0014).
+
+### Fixed
+
+- Every non-default feature combination failed to compile (missing
+  `src/compact.rs`, ungated `std` imports, std-only collections) —
+  invisible to the default-features-only gate. All tiers now compile on
+  host and both embedded targets.
+- `std` now enables the `heapless` feature per ADR-0013's matrix (was
+  `dep:heapless`, leaving the packer without the compact API).
+- The spec's 12-byte delta layout could not encode real calendars
+  (dhuhr − shurouq exceeds one byte at every latitude); replaced by the
+  20-byte fajr-relative layout, with per-format pack-time rejection
+  (`DeltaOverflow`, `IqamaOffsetOverflow`, `TimeOutOfRange`,
+  `TooManyDays`).
+- The builder validated both record formats for every day — direct-only
+  days were rejected when packing direct. Encoders are per-format now.
+
 ## [0.4.1] - 2026-10-05
 
 ### Added

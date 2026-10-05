@@ -1,6 +1,6 @@
 # ADR-0013: no_std and MCU support — heapless zero-alloc execution, compact binary packaging, and Cargo feature tiers
 
-- **Status:** Accepted
+- **Status:** Accepted — implemented in v0.4.2; layering refined and the 12-byte delta layout replaced by the 20-byte fajr-relative layout in [ADR-0014](0014-ddd-layering-and-plantuml.md)
 - **Date:** 2026-10-05
 - **Decides:** Target platform expansion to bare-metal microcontrollers (ESP32, RP2040, STM32, RISC-V), feature gating architecture, hardened compact binary layout (`MQTC`), and zero-allocation runtime.
 

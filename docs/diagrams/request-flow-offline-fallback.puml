@@ -1,0 +1,29 @@
+@startuml request-flow-offline-fallback
+title Offline fallback (conf_data_dated) — the date is the staleness signal
+participant App
+participant "MawaqitClient" as C
+participant "pages cache" as PC
+participant "mawaqit.net (down)" as S
+participant "snapshot dir" as D
+
+App -> C : conf_data_dated(slug)
+C -> PC : get(slug)
+alt memory hit
+  PC --> App : (conf, None)
+else miss
+  C -> S : GET /en/{slug}
+  S --> C : ✗ connection refused / timeout
+  alt snapshot exists
+    C -> D : load(slug) — total contract
+    D --> C : Some(fetched_at, conf)
+    C --> App : (conf, Some(fetched_at))
+  else no snapshot
+    C --> App : Err(original network error)
+  end
+end
+note over App
+  Key asymmetry: a successful fetch reports None; a failed fetch reports
+  Some(date) — the "how stale is this" signal, never silently enforced
+  as a TTL (specs/offline-snapshots.md).
+end note
+@enduml

@@ -1,0 +1,65 @@
+@startuml system-architecture
+title System architecture — one crate, DDD layers (ADR-0014), three data stores
+skinparam componentStyle rectangle
+skinparam defaultTextAlignment center
+skinparam nodesep 8
+skinparam ranksep 12
+
+actor "UI / tray / alarms" as UI
+package "mawaqit-api (keyless client)" {
+  component "Public API\nMawaqitClient · month_times · times_for_date\nparse_page · page_url · is_valid_slug · minutes_between\ncompact::* (MQTC)" as API #FFE9C8
+
+  package "infrastructure — std tier" {
+    component "client.rs\nfetch orchestration · SOCKS5/Tor opt-in\nresponse cap · timeouts" as CLIENT
+    component "cache.rs\nTtlCache · pages 6h · searches 30min" as CACHE
+    component "disk.rs\nsnapshot envelope · hashed filename\natomic rename" as DISK
+    component "voices.rs::download_voice\nCDN fetch" as VDOWNLOAD
+  }
+
+  package "domain — alloc tier" {
+    component "scraper.rs\nfind confData · balanced JSON scan" as SCRAPER
+    component "calendar.rs\nrow layouts · iqama resolution\nHH:MM contract" as CALENDAR
+    component "models.rs\nMosque · ConfData · times types" as MODELS
+    component "voices.rs catalog\nADHAN_VOICES · adhan_voice_url" as VOICES
+  }
+
+  package "domain — heapless tier (bare metal)" {
+    component "compact.rs\nMQTC codec · CompactCalendarView (zero alloc)\nCompactCalendarBuilder (alloc side)" as COMPACT #DDF0DD
+  }
+
+  package "domain — core tier (compiles to core)" as CORE {
+    component "time.rs\nparse_hhmm · is_displayable_hhmm\nminutes_between" as TIME #E8F4FF
+    component "slug.rs\nis_valid_slug · page_url" as SLUG #E8F4FF
+  }
+
+  component "error.rs\nMawaqitError (+ Compact)" as ERROR
+}
+
+cloud "mawaqit.net\nsearch API + mosque pages" as MW
+cloud "cdn.mawaqit.net\nadhan voices" as CDN
+
+UI --> API
+API --> CLIENT
+CLIENT <--> CACHE
+CLIENT --> MW : HTTP (30s timeout, 1 MiB cap, browser UA)
+CLIENT --> SCRAPER
+CLIENT <--> DISK : best-effort store / fallback load
+SCRAPER --> MODELS
+API --> CALENDAR
+CALENDAR --> MODELS
+SCRAPER --> ERROR
+CALENDAR --> ERROR
+CLIENT --> ERROR
+DISK --> MODELS
+API --> COMPACT
+VOICES --> CDN : download_voice (std only)
+TIME --> CALENDAR
+SLUG --> CLIENT
+
+note bottom of CORE
+  Layer rule (ADR-0014): domain never imports infrastructure; every
+  layer compiles inside its dependency tier — core < alloc < std.
+  Everything above models/compact is tainted by the network; everything
+  below the scraper/calendar boundary promises typed, validated data.
+end note
+@enduml

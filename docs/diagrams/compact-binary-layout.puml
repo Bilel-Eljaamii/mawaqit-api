@@ -1,0 +1,28 @@
+@startuml compact-binary-layout
+title MQTC v1 binary layout — 4-byte aligned, CRC-32 sealed (ADR-0013)
+skinparam defaultTextAlignment left
+
+rectangle "header — 24 bytes" as H #FFE9C8 {
+  rectangle "0x00 magic [u8;4] = \"MQTC\"\n0x04 version u8 = 1\n0x05 scope u8 (0 week · 1 months · 2 year · 3 custom)\n0x06 flags u8 (0x01 imsak · 0x02 has_iqama · 0x04 has_jumua · 0x08 fajr-relative)\n0x07 reserved u8\n0x08 start_year u16 LE\n0x0A start_day_of_year u16 LE (1..=366)\n0x0C day_count u16 LE\n0x0E jumua u16 LE (0xFFFF = none)\n0x10 jumua2 u16 LE (0xFFFF = none)\n0x12 pad [u8;2] = 00 00\n0x14 crc32 u32 LE — CRC-32-IEEE over\nheader-with-zeroed-CRC + all records" as HF
+}
+
+rectangle "day record — direct (24 B, flags & 0x08 == 0)" as RD #DDF0DD {
+  rectangle "0x00..0x0C adhan [u16;6] LE — minutes 0..=1439\nfajr · shurouq · dhuhr · asr · maghrib · isha\n0x0C..0x16 iqama [u16;5] LE packed:\n  bit 15 ROLLOVER (next calendar day — C1)\n  bit 14 VALID (iqama present)\n  bits 0..11 minutes 0..=1439\n0x16 day_flags u8 (bit 0: custom Jumu'ah)\n0x17 reserved u8" as DF
+}
+
+rectangle "day record — fajr-relative (20 B, flags & 0x08 ≠ 0)" as RR #DDF0DD {
+  rectangle "0x00 base_fajr u16 LE\n0x02..0x0C adhan offsets [u16;5] LE — minutes after fajr\n(ascending input required; > 1439 ⇒ DeltaOverflow)\n0x0C..0x11 iqama offsets [u8;5] — minutes after own adhan\n(0xFF = absent; > 254 ⇒ IqamaOffsetOverflow;\nrollover encoded as offset past midnight)" as RF
+}
+
+H --> RD
+H --> RR
+
+note as N1
+  Sizes: direct year = 24 + 365×24 = 8 784 B · fajr-relative year =
+  24 + 365×20 = 7 324 B. Decoded on the stack in registers — zero heap.
+  The original 12-byte delta layout (24 B header draft) could not encode
+  real calendars — dhuhr − shurouq alone exceeds one byte at every
+  latitude — and was replaced by this 20-byte fajr-relative layout in
+  v0.4.2 (ADR-0014).
+end note
+@enduml

@@ -1,0 +1,42 @@
+@startuml calendar-month-extraction
+title Month / date extraction — dedupe (F5), join, and best-effort iqama
+skinparam componentStyle rectangle
+skinparam defaultTextAlignment center
+
+package "month_times(conf, m)" {
+  component "1..=12? else InvalidMonth" as M1
+  component "calendar[m-1]? else NoCalendar" as M2
+  component "per day: parse key as u32\n(exotic keys skipped)" as M3
+  component "dedupe: canonical decimal key wins (F5)" as M3B
+  component "daily_from_row\nfailures silently dropped" as M4
+  component "sort by day" as M5
+  M1 --> M2
+  M2 --> M3
+  M3 --> M3B
+  M3B --> M4
+  M4 --> M5
+}
+
+package "month_iqama_times(conf, m)" {
+  component "iqama_calendar? else NoCalendar" as Q1
+  component "adhan month needed (+N expansion)" as Q2
+  component "join by day; days without adhan row skipped" as Q3
+  component "sort by day" as Q4
+  Q1 --> Q2
+  Q2 --> Q3
+  Q3 --> Q4
+}
+
+package "times_for_date(conf, date)" {
+  component "adhan: month path, find day\nmissing ⇒ NoCalendar" as T1
+  component "iqama: best-effort — any failure ⇒ None\n(adhan still surfaces)" as T2
+  T1 --> T2
+}
+
+note as N1
+  Duplicate day keys ("1", "01", "+1") are deduplicated (FINDING F5,
+  fixed): one entry per parsed day, the canonical decimal key always
+  winning over its variants — pinned by
+  finding_f5_duplicate_day_keys_yield_one_day.
+end note
+@enduml

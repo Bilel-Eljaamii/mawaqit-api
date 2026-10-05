@@ -1,0 +1,32 @@
+@startuml snapshot-load-flow
+title Snapshot load flow — a total function: hostile input is just None
+start
+:load(dir, slug);
+if (file readable?) then (no)
+  #DDDDDD:None;
+  stop
+else (yes)
+  if (parses as envelope v1?) then (no)
+    #DDDDDD:None;
+    stop
+  else (yes)
+    if (version == 1?) then (no)
+      #DDDDDD:None;
+      stop
+    else (yes)
+      if (mosque_slug == requested slug?) then (no — never serve another mosque)
+        #DDDDDD:None;
+        stop
+      else (yes)
+        if (conf deserializes into ConfData?) then (no)
+          #DDDDDD:None;
+          stop
+        else (yes)
+          #DDFFDD:Some(fetched_at, conf);
+          stop
+        endif
+      endif
+    endif
+  endif
+endif
+@enduml

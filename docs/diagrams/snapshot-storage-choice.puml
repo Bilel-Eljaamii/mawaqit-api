@@ -1,0 +1,30 @@
+@startuml snapshot-storage-choice
+title Why the storage value is neither raw nor bare struct (F10)
+skinparam componentStyle rectangle
+skinparam defaultTextAlignment center
+
+package "✗ store raw verbatim" #FFDDDD {
+  component "wire shapes (nulls in rows,\nnumeric name) written back" as R1
+  component "strict load rejects ⇒\nsnapshot never loads (F10)" as R2
+  R1 --> R2
+}
+
+package "✗ store bare struct" #FFDDDD {
+  component "unmodeled fields lost" as B1
+  component "silent data loss vs live path" as B2
+  B1 --> B2
+}
+
+package "✓ store struct + raw extras" #DDFFDD {
+  component "modeled keys win over raw" as G1
+  component "loads under strict serde;\nunmodeled fields survive" as G2
+  G1 --> G2
+}
+
+legend bottom
+  Regression anchors:
+  · src/disk.rs::messy_wire_shapes_in_raw_never_break_loading
+  · src/disk.rs::roundtrip_survives_a_populated_raw_object
+  · tst/fuzz/mutation.rs::finding_f10_snapshot_roundtrips_wire_tolerated_shapes
+endlegend
+@enduml

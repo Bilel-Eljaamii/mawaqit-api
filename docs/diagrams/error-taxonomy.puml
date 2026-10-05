@@ -1,0 +1,48 @@
+@startuml error-taxonomy
+title Error taxonomy — which failure produces which MawaqitError
+skinparam componentStyle rectangle
+skinparam defaultTextAlignment left
+
+component "transport" as NET #FFF6DD
+component "status check (before body read)" as ST #FFF6DD
+component "body handling" as BODY #FFF6DD
+component "calendar extraction" as CAL #FFF6DD
+
+component "Http(reqwest)" as HTTP #FFE1E1
+component "Parse" as PARSE #FFE1E1
+component "MosqueNotFound" as MNF #FFE1E1
+component "Api{status, url}" as API #FFE1E1
+component "ConfDataNotFound" as CDNF #FFE1E1
+component "NoCalendar" as NC #FFE1E1
+component "InvalidMonth(u32)" as IM #FFE1E1
+component "Compact(CompactError)\nMQTC load/pack failures: InvalidMagic · UnsupportedVersion\nBufferTooSmall · ChecksumMismatch · InvalidDate\nTimeOutOfRange · DeltaOverflow · IqamaOffsetOverflow\nTooManyDays" as COMPACT #FFE1E1
+
+NET --> HTTP : connect refused / reset
+NET --> HTTP : 30s timeout
+NET --> PARSE : non-UTF-8 body
+NET --> PARSE : body > 1 MiB cap
+ST --> MNF : 404
+ST --> API : other !2xx — incl. 3xx:\nredirects never followed (F1)
+BODY --> PARSE : search: not a JSON array\n(one bad element)
+BODY --> CDNF : page: no "confData =" assignment\nor unbalanced literal
+BODY --> PARSE : page: literal not JSON
+BODY --> PARSE : times < 5 strings
+CAL --> NC : calendar missing/empty
+CAL --> IM : month ∉ 1..=12
+CAL --> PARSE : row would surface non-HH:MM\n(F4: day rejected whole)
+CAL --> PARSE : row shape ≠ 5/6 (+/− shuruq col)
+CAL --> NC : today's day missing
+
+note as N1
+  Semantic groupings — transient: Http, Api (5xx/429) → retry with
+  backoff (examples/error_recovery.rs). Terminal: MosqueNotFound,
+  InvalidMonth → caller error. Contract drift / hostile:
+  ConfDataNotFound, Parse, NoCalendar, Compact → do not hammer; the
+  snapshot fallback engages for conf_data.
+
+  Fallback interaction: conf_data / conf_data_dated wrap the whole
+  fetch — ANY variant here triggers the snapshot fallback when a disk
+  cache is configured; the original error only surfaces if no snapshot
+  loads. search_mosques has no fallback (cheap, user-initiated).
+end note
+@enduml

@@ -1,0 +1,36 @@
+@startuml calendar-iqama-resolution
+title Iqama resolution (resolve_iqama_parts) — hostile-value outcomes pinned by tests
+start
+:raw entry (trimmed);
+if (starts with '+'?) then (yes)
+  if (rest parses as i64?) then (no)
+    :fallback: adhan time;
+    stop
+  else (yes)
+    :clamp N to 0..=1440;
+    if (adhan parses?) then (yes)
+      :format(adhan + N min)\nnext-day wall clock is valid;
+      stop
+    else (no)
+      :fallback: adhan time;
+      stop
+    endif
+  endif
+else (no)
+  if (strict HH:MM?) then (yes)
+    :passthrough (trimmed);
+    stop
+  else (no)
+    :fallback: adhan time;
+    stop
+  endif
+endif
+
+legend right
+  Hostile-value outcomes (all pinned by tests):
+  "+9223372036854775807" ⇒ clamped +1440 ⇒ next-day wall clock
+  "+abc", "+", garbage   ⇒ adhan
+  "7:5", "25:70" (parses but not displayable) ⇒ adhan —
+  passthrough cannot smuggle non-display times.
+endlegend
+@enduml

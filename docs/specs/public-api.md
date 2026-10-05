@@ -115,20 +115,25 @@ available.
 
 ## Compact MCU API (`src/compact.rs`, feature = "heapless")
 
-Zero-allocation types for microcontrollers reading from flash ROM or RAM:
+Zero-allocation types for microcontrollers reading from flash ROM or RAM
+(`#[cfg(feature = "heapless")]`; v0.4.2):
 
 | Type | Purpose | Methods |
 | :--- | :--- | :--- |
-| `CompactCalendarView<'a>` | Zero-copy borrowing view over binary payload (`MQTC`) | `from_bytes(&'a [u8]) -> Result<Self, CompactError>`, `times_for_date(NaiveDate) -> Option<CompactDayTimes>`, `jumua() -> Option<CompactTime>`, `jumua2() -> Option<CompactTime>`, `day_count() -> usize`, `start_date() -> NaiveDate` |
-| `CompactTime(u16)` | Minutes from midnight (`0..=1439`) with rollover and validity flags | `hours() -> u8`, `minutes() -> u8`, `minutes_from_midnight() -> u16`, `is_rollover() -> bool`, `is_valid() -> bool`, `to_hhmm() -> heapless::String<5>` |
-| `CompactDayTimes` | Prayer times for one calendar day | `date: NaiveDate`, `adhan: CompactDayAdhan`, `iqama: Option<CompactDayIqama>` |
-| `CompactDayAdhan` | 6 adhan times | `fajr`, `shurouq`, `dhuhr`, `asr`, `maghrib`, `isha` |
-| `CompactDayIqama` | 5 iqama times | `fajr`, `dhuhr`, `asr`, `maghrib`, `isha` |
+| `CompactCalendarView<'a>` | Zero-copy borrowing view over a binary payload (`MQTC`, CRC-checked at load) | `from_bytes(&'a [u8]) -> Result<Self, CompactError>`, `times_for_date(NaiveDate) -> Option<CompactDayTimes>`, `start_date()/end_date() -> Result<NaiveDate, CompactError>`, `jumua()/jumua2() -> Option<CompactTime>`, `day_count() -> u16`, `scope_type() -> ScopeType`, `flags() -> u8`, `imsak_mode()/has_iqama()/has_jumua()/is_fajr_relative() -> bool` |
+| `CompactTime(u16)` | Minutes from midnight (`0..=1439`) with rollover and validity bits | `hours() -> u8`, `minutes() -> u8`, `minutes_from_midnight() -> u16`, `is_rollover() -> bool`, `is_valid() -> bool`, `to_hhmm() -> heapless::String<5>` |
+| `CompactDayTimes` | One decoded day | `adhan: CompactAdhanTimes`, `iqama: Option<CompactIqamaTimes>`, `day_flags: u8` |
+| `CompactAdhanTimes` | 6 adhan times | `fajr`, `shurouq`, `dhuhr`, `asr`, `maghrib`, `isha` — each `CompactTime` |
+| `CompactIqamaTimes` | 5 iqama times | `fajr`, `dhuhr`, `asr`, `maghrib`, `isha` — per-field `is_valid()`/`is_rollover()` |
+| `ScopeType` | Scope byte, informational | `Week`/`Months`/`Year`/`Custom`, `to_byte()`, `from_byte()` |
+| `CompactError` | Total-parsing errors | `InvalidMagic`, `UnsupportedVersion(u8)`, `BufferTooSmall`, `ChecksumMismatch { expected, computed }`, `InvalidDate`, `TimeOutOfRange { prayer, minutes }`, `DeltaOverflow { prayer, delta }`, `IqamaOffsetOverflow { prayer, delta }`, `TooManyDays(usize)` |
 
-Under `feature = "alloc"` / `"std"`, the module also provides:
+Under `feature = "alloc"` (implied by `std`), the module also provides the
+packer side:
 
-- `CompactScope`: `Week { start_date }`, `Months { year, start_month, count }`, `Year { year }`, `Custom { start_date, end_date }`.
-- `CompactCalendarBuilder`: `from_conf(&ConfData, scope) -> Result<Self, MawaqitError>`, `to_bytes(compress: bool) -> Vec<u8>`, `to_rust_code(var_name) -> String`, `to_c_header(var_name) -> String`.
+- `CompactCalendarBuilder::new(start: NaiveDate, scope: ScopeType, fajr_relative: bool)`, `.with_imsak_mode(bool)`, `.with_jumuah(Option<u16>, Option<u16>)`, `.push_day(CompactDayInput)`, `.len()`, `.is_empty()`.
+- `to_bytes() -> Result<Vec<u8>, CompactError>`, `to_rust_code(const_name) -> Result<String, CompactError>`, `to_c_header(const_name) -> Result<String, CompactError>`.
+- `CompactDayInput { adhan: [u16; 6], iqama: [Option<CompactIqamaInput>; 5], day_flags: u8 }` with `CompactIqamaInput { minutes: u16, rollover: bool }`.
 
 See [`compact-binary-and-mcu.md`](compact-binary-and-mcu.md) for full binary layout and CLI packer details.
 
@@ -145,7 +150,7 @@ See [`compact-binary-and-mcu.md`](compact-binary-and-mcu.md) for full binary lay
 | `NoCalendar` | — | `calendar` missing/empty, or the requested day absent from it |
 | `Api` | `status: u16, url` | any other non-success HTTP status |
 | `InvalidProxy` | message *(0.3.0)* | `with_socks_proxy` got an address that is not `socks5h://host[:port]` — wrong scheme (`socks5`/http(s)/none), empty host, path/query/fragment, or unparseable |
-| `Compact` | `CompactError` *(0.4.0)* | invalid compact binary header, buffer too small, checksum mismatch (CRC-32), unsupported version, date out of bounds |
+| `Compact` | `CompactError` *(0.4.2)* | MQTC load/pack failure: invalid magic, unsupported version, buffer too small, CRC-32 checksum mismatch, unresolvable start date, pack-time encode limits (`TimeOutOfRange`, `DeltaOverflow`, `IqamaOffsetOverflow`, `TooManyDays`). Out-of-range date lookups are `None`, not this error |
 
 Retry guidance (used by `examples/error_recovery.rs`): `Http` and `Api`
 (5xx/429) are transient → retry with backoff; `MosqueNotFound`,

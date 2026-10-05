@@ -1,0 +1,47 @@
+@startuml test-pyramid
+title Test pyramid — what gates what (test-specs/README.md, ADR-0007)
+skinparam componentStyle rectangle
+skinparam defaultTextAlignment center
+
+package "Tier 1 — ut: pure hostile parsing (no I/O)" #DDF0DD {
+  component "tst/ut: corpus + semantics + compact + voices · 63 tests\nfindings F4, F5, F6 pinned green · MQTC binary contract" as L1
+}
+package "Tier 2 — ct: component vs mocks (local TCP + temp dirs)" #DDF0DD {
+  component "tst/ct: hostile_http + disk_cache + disk · 26 tests\nfindings F1, F2 pinned green · F3 residual" as L2
+}
+package "Tier 3 — fuzz: deterministic mutation (temp dirs)" #DDF0DD {
+  component "tst/fuzz: search model · URL builder · snapshot layer · MQTC · 6 tests\nfinding F10 pinned green" as L3
+}
+package "Hostile-in-the-Loop (not in cargo test)" #FFF6DD {
+  component "e2e world tour — 100+ live mosques\nignore-annotated · just live" as H1
+  component "libFuzzer campaign — parse_page, conf_pipeline\njust fuzz" as H2
+  component "findings ledger audit — all fixed,\nregression tests run in cargo test" as H3
+}
+
+component "just verify:\nfmt → clippy -D warnings → check → targets-mcu → test → doc → smoke" as GATE #FFE9C8
+
+GATE --> L1
+GATE --> L2
+GATE --> L3
+component "release / weekly" as REL
+REL --> H1
+REL --> H2
+REL --> H3
+component "findings ledger\n(test-specs/README.md)" as LEDGER
+H3 --> LEDGER
+
+note as N1
+  Tier guarantees nobody above re-checks:
+  · ut — hostile bytes/JSON cannot panic, hang, or lie through the
+    parse/calendar/MQTC path
+  · ct — the client survives a lying server; the snapshot layer honors
+    its store/fallback contract
+  · fuzz — mutation space beyond the corpus is safe, reproducibly, in CI
+  · HIL — the real site's real data parses everywhere
+
+  Rule of thumb: pure input→behavior ⇒ ut; socket/file but not the real
+  site ⇒ ct; new surface over attacker-shaped data ⇒ seed fuzz + corpus;
+  real-site claim ⇒ e2e fixture; not-yet-true security behavior ⇒
+  ignore-annotated finding test (ADR-0006).
+end note
+@enduml

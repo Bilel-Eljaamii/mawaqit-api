@@ -1,0 +1,33 @@
+@startuml request-flow-confdata
+title confData fetch (online) — one page serves every method
+participant App
+participant "MawaqitClient" as C
+participant "pages cache (6 h)" as PC
+participant "disk::store" as D
+participant "mawaqit.net" as S
+
+App -> C : conf_data(slug)
+C -> PC : get(slug)
+alt cache hit
+  PC --> App : Arc<ConfData> (no request)
+else miss
+  C -> C : crate::slug::is_valid_slug(slug)?
+  note over C
+    invalid ⇒ placeholder "-"×clamp(len, 4, 64)
+    (ADR-0008 / FINDING F2 — namespace-locked)
+  end note
+  C -> S : GET /en/{slug}
+  S --> C : 200 HTML
+  C -> C : read_capped (1 MiB, UTF-8)
+  C -> C : scraper::extract_conf_data
+  C -> PC : insert(slug, Arc<ConfData>)
+  opt disk cache enabled
+    C -> D : store (atomic, best-effort)
+  end
+  C --> App : Ok(conf)
+end
+note over C, S
+  404 ⇒ MosqueNotFound · !2xx ⇒ Api · parse errors ⇒ Parse / ConfDataNotFound
+  FINDING F1: redirects are never followed — a 302 surfaces as Api{302}
+end note
+@enduml

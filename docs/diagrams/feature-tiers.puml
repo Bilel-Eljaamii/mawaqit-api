@@ -1,0 +1,40 @@
+@startuml feature-tiers
+title Cargo feature tiers mapped to DDD layers (ADR-0013 + ADR-0014)
+skinparam componentStyle rectangle
+skinparam defaultTextAlignment center
+
+package "core (no allocator) — always compiles" #E8F4FF {
+  component "time.rs\nminutes_between" as TIME
+  component "slug.rs\nis_valid_slug" as SLUG
+  component "voices catalog\nADHAN_VOICES · AdhanVoice" as VOICES
+  component "error.rs\nMawaqitError (core variants)" as ERROR
+}
+
+package "alloc tier — default-features = false, features = [alloc]" #FFF6DD {
+  component "models.rs (ConfData…)\ncalendar.rs · scraper.rs\nserde_json (optional dep)" as ALLOMD
+  component "compact.rs::CompactCalendarBuilder\n.bin / .rs / .h emitters" as BUILDER
+  component "voices::adhan_voice_url\nvoice_id_from_conf" as VOICESALLOC
+}
+
+package "heapless tier — features = [heapless]\nzero-alloc MCU firmware" #DDF0DD {
+  component "compact.rs::CompactCalendarView\nCompactTime · CompactDayTimes\nCRC-32 (crc32fast, no_std)" as VIEW
+}
+
+package "std tier — default" #FFE1E1 {
+  component "client.rs (reqwest/tokio)\ncache.rs · disk.rs\ndownload_voice · pack_for_mcu" as STDINFRA
+}
+
+TIME --> SLUG : shared policy
+ALLOMD ..> TIME : uses
+BUILDER ..> VIEW : same module, cfg-split
+STDINFRA ..> ALLOMD
+STDINFRA ..> VIEW : std enables heapless\n(ADR-0013 feature matrix)
+
+note as N1
+  Gate: just targets-mcu —
+  {thumbv7em-none-eabihf, riscv32imc-unknown-none-elf, host}
+  × {std, alloc, heapless} must all cargo-check clean.
+  serde_json cannot compile without an allocator, so it is wired into
+  the alloc feature — the heapless tier never links it.
+end note
+@enduml

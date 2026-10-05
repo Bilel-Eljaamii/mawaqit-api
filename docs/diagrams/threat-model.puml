@@ -1,0 +1,95 @@
+@startuml threat-model
+title Threat model — surfaces → defenses → finding status (ADR-0006, ADR-0009)
+skinparam componentStyle rectangle
+skinparam defaultTextAlignment left
+
+package "① HTTP server (fully hostile)" #FFF6DD {
+  component "garbage / lying JSON" as A1
+  component "typed strict parse ⇒ Err" as D1 #DDF0DD
+  component "lying Content-Length, truncation, reset" as A2
+  component "reqwest ⇒ Http" as D2 #DDF0DD
+  component "1 MiB+ body" as A3
+  component "response cap ⇒ Parse" as D3 #DDF0DD
+  component "redirect to attacker host" as A4
+  component "F1 fixed: Policy::none() —\n302 surfaces as Api{302}" as D4 #DDF0DD
+  A1 --> D1
+  A2 --> D2
+  A3 --> D3
+  A4 --> D4
+}
+
+package "② confData content (attacker-authored page)" #FFF6DD {
+  component "structural garbage" as B1
+  component "scraper tolerance ⇒ Err/None, never panic\n(ut corpus + libFuzzer)" as D5 #DDF0DD
+  component "lying times (25:70)" as B2
+  component "F4 fixed: day rejected whole" as D6 #DDF0DD
+  component "huge +N offsets" as B3
+  component "clamp 0..=1440, no overflow" as D7 #DDF0DD
+  component "bidi/control chars in strings" as B4
+  component "F6 fixed: sanitize_text strips\ncontrol + invisible Format chars" as D8 #DDF0DD
+  component "XSS markup in strings" as B5
+  component "passes through by design —\nrender layer must neutralize" as D9
+  component "deep nesting" as B6
+  component "serde 128-level limit ⇒ Err" as D10 #DDF0DD
+  B1 --> D5
+  B2 --> D6
+  B3 --> D7
+  B4 --> D8
+  B5 --> D9
+  B6 --> D10
+}
+
+package "③ slugs / search words (untrusted input crossing out)" #FFF6DD {
+  component "../, ?x, #frag, %00" as C1
+  component "F2 fixed: is_valid_slug +\nplaceholder fetch, namespace-locked" as D11 #DDF0DD
+  component "CRLF in search word" as C2
+  component "percent-encoded query param\n(single-line request pinned)" as D12 #DDF0DD
+  C1 --> D11
+  C2 --> D12
+}
+
+package "④ snapshot dir (attacker-writable, same user)" #FFF6DD {
+  component "hostile file contents" as E1
+  component "total load ⇒ None, never panic" as D13 #DDF0DD
+  component "hostile slug → path escape" as E2
+  component "hash-derived filename\n(fuzz-pinned confinement)" as D14 #DDF0DD
+  component "cross-mosque swap" as E3
+  component "envelope slug verification" as D15 #DDF0DD
+  component "wire-tolerated shapes on disk" as E4
+  component "F10 fixed: struct+overlay storage" as D16 #DDF0DD
+  E1 --> D13
+  E2 --> D14
+  E3 --> D15
+  E4 --> D16
+}
+
+package "⑤ MQTC blobs (attacker-flashed / OTA-corrupted bytes)" #FFF6DD {
+  component "truncated / flipped bits / wrong magic" as F1x
+  component "total parse ⇒ Err, never panic\n(ut compact suite + mutation fuzz);\nCRC-32 rejects corruption pre-query" as D17 #DDF0DD
+  component "crafted-but-CRC-valid blob" as F2x
+  component "bounded decode ⇒ in-range display\ntimes or None (out-of-bounds date)" as D18 #DDF0DD
+  F1x --> D17
+  F2x --> D18
+}
+
+A3 .-> D3 : RESIDUAL F3: cap after buffering
+
+legend right
+  Position: the client fetches public religious data from a server it
+  does not control, using identifiers (slugs, search words) that cross
+  the boundary in both directions, and persists data to disk. No
+  credentials to steal — the assets are integrity of displayed times,
+  availability (no hang / OOM / crash), and clean degradation.
+
+  Findings: F1 fixed · F3 documented residual (stream body, abort past
+  cap) · F2, F4, F5, F6, F10 fixed. Surface ⑤ is guarded from birth by
+  the MQTC suite (docs/test-specs/ut/compact.md).
+
+  Explicit non-goals: content sanitation for rendering (XSS belongs to
+  the frontend — the contract is "never panic, never mis-shape");
+  TLS-level MITM (rustls validates the host; hostile CA out of scope);
+  local malware with the user's privileges; denial of wallet / rate
+  abuse by the embedder (caches bound volume per slug; scheduling is
+  the embedder's).
+endlegend
+@enduml

@@ -21,6 +21,10 @@ data.
 - **Hostile-tested**: a red-team suite (HTTP garbage, lying JSON, hostile
   slugs, wire-tolerated confData shapes, snapshot fuzzing) runs in normal
   `cargo test`.
+- **`no_std` embedded tier**: the pure core compiles for bare-metal MCUs;
+  prayer calendars pack to a CRC-sealed 4-byte-aligned binary that firmware
+  queries from flash with zero heap (see
+  [Embedded / `no_std`](#embedded--no_std-mcu)).
 
 ## Usage
 
@@ -140,6 +144,42 @@ let path = download_voice(&client, "adhan-quds", &cache_dir).await?;
 Downloads are capped (8 MB), atomic, cached (a second call is a no-op), and
 routed through the client's transport — a proxy (Tor) applies. The mosque's
 own choice is available via `voice_id_from_conf(&conf_data)`.
+
+## Embedded / `no_std` (MCU)
+
+The domain core compiles for bare metal — ESP32, RP2040, STM32, RISC-V
+([ADR-0013](docs/adr/0013-no-std-and-mcu-support.md)). Three Cargo feature
+tiers in one crate:
+
+| Feature | Tier | What you get |
+| --- | --- | --- |
+| `std` (default) | desktop/server/CLI | everything: HTTP client, snapshots, voice downloads, the MQTC packer |
+| `alloc` | no_std + heap | dynamic `ConfData`, `parse_page`, calendar resolution |
+| `heapless` | no_std, zero-alloc | `CompactCalendarView` — prayer times queried straight from memory-mapped flash, 0 bytes of heap |
+
+The MCU path: pack a mosque's calendar **before** flashing (workstation,
+std side), then query it in O(1) on the device:
+
+```bash
+cargo run --example pack_for_mcu -- --slug grande-mosquee-de-paris \
+  --scope year --compress delta --format rust --out firmware/src/prayer_data.rs
+```
+
+```rust,ignore
+use mawaqit_api::compact::CompactCalendarView;
+
+static PRAYER_DATA: &[u8] = include_bytes!("prayer_data.bin");
+
+let calendar = CompactCalendarView::from_bytes(PRAYER_DATA)?; // CRC-checked
+if let Some(today) = calendar.times_for_date(rtc.today()) {
+    display.show(today.adhan.fajr.to_hhmm()); // heapless::String<5>, 0 alloc
+}
+```
+
+Binary layout, record formats, and integrity guarantees:
+[`docs/specs/compact-binary-and-mcu.md`](docs/specs/compact-binary-and-mcu.md).
+The feature matrix ({host, thumbv7em, riscv32} × {std, alloc, heapless}) is
+part of `just verify` and CI.
 
 ## Tests
 

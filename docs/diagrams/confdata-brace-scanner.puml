@@ -1,0 +1,31 @@
+@startuml confdata-brace-scanner
+title Brace-scanner state machine — depth accounting suspends inside strings
+state Outside
+state Depth1
+state Deeper
+state LessDeep
+state InString
+state Escape
+
+[*] --> Outside
+Outside --> Outside : other byte
+Outside --> Depth1 : {
+Depth1 --> Deeper : {
+Deeper --> Deeper : {
+Deeper --> LessDeep : }
+LessDeep --> Deeper : {
+LessDeep --> LessDeep : }
+LessDeep --> Done : } at depth 1 ⇒ return literal
+Outside --> InString : "
+InString --> InString : printable / { } ; \n
+InString --> Escape : backslash
+Escape --> InString : any byte (consumed)
+InString --> Outside : " (string closed)
+
+note right of InString
+  Braces and semicolons inside strings are content, not structure —
+  the lookalike corpus (tst/ut/corpus.rs) pins this.
+  No closing brace ⇒ None ⇒ the mention is abandoned
+  (bounded work, no backtracking).
+end note
+@enduml

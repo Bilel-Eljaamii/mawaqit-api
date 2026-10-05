@@ -1,0 +1,23 @@
+@startuml snapshot-lifecycle-states
+title Snapshot state machine (specs/offline-snapshots.md, ADR-0005)
+state Absent
+state Storing
+state Present
+state ServingOffline
+
+[*] --> Absent : dir exists, no file
+Absent --> Storing : successful network fetch\n(disk cache enabled)
+Storing --> Present : tmp written + atomic rename
+Storing --> Absent : any IO/serialize failure\n(best-effort — fetch still OK)
+Present --> Present : successful fetch refreshes\n(rewrite, atomic)
+Present --> ServingOffline : fetch fails, load(slug) OK
+ServingOffline --> Present : next successful fetch refreshes
+Present --> Absent : load fails (hostile or corrupt file)\ntreated as no snapshot
+ServingOffline --> Absent : (only via external corruption)
+Absent --> [*]
+
+note bottom of Present
+  Every arrow into Absent from a load is the total-load contract:
+  a hostile file cannot crash or poison — it is just gone.
+end note
+@enduml

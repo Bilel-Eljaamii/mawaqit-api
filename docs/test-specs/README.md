@@ -11,9 +11,11 @@ test-specs/
 │   ├── cache.md         in-process TTL cache (doc-hidden internal)
 │   ├── calendar.md      calendar pipeline through the public API
 │   ├── client.md        helpers + SOCKS5 validation via public builders
+│   ├── compact.md       the MQTC binary contract (ADR-0013)
 │   ├── scraper.md       page extraction via parse_page
 │   ├── corpus.md        hostile corpus for parse_page
-│   └── semantics.md     valid-JSON semantic attacks + contract pins
+│   ├── semantics.md     valid-JSON semantic attacks + contract pins
+│   └── voices.md        adhan voice catalog + page validation
 ├── ct/                  component tier (tst/ct.rs) — local mocks only
 │   ├── hostile-http.md  client vs lying raw-TCP server
 │   ├── disk-cache.md    offline snapshot store/load/fallback contract
@@ -32,9 +34,9 @@ test-specs/
 
 | Tier | Binary | I/O | Runs by default | Count (approx.) | Spec |
 | --- | --- | --- | --- | --- | --- |
-| 1. unit (`ut`) | `tst/ut.rs` | none | yes | 47 (findings F4–F6, C1, M1 pinned green) | [`ut/`](ut/corpus.md) |
+| 1. unit (`ut`) | `tst/ut.rs` | none | yes | 63 (findings F4–F6, C1, M1 pinned green; MQTC contract in [`ut/compact.md`](ut/compact.md)) | [`ut/`](ut/corpus.md) |
 | 2. component (`ct`) | `tst/ct.rs` | local TCP + temp dirs | yes | 26 (findings F1–F3, F10 pinned green) | [`ct/`](ct/hostile-http.md) |
-| 3. mutation (`fuzz`) | `tst/fuzz.rs` | temp dirs | yes | 5 (finding F10 pinned green) | [`fuzz/`](fuzz/mutation.md) |
+| 3. mutation (`fuzz`) | `tst/fuzz.rs` | temp dirs | yes | 6 (finding F10 pinned green; MQTC seed) | [`fuzz/`](fuzz/mutation.md) |
 | 4. end-to-end (`e2e`) | `tst/e2e.rs` | **live mawaqit.net** | `#[ignore]`d | 2 (smoke + world tour) | [`e2e/`](e2e/smoke.md) |
 | 5. libFuzzer campaign | `fuzz/` (cargo-fuzz) | none | nightly/manual | 2 targets | [`fuzz/libfuzzer-campaign.md`](fuzz/libfuzzer-campaign.md) |
 

@@ -1,0 +1,53 @@
+@startuml mcu-pipeline
+title MCU pipeline — pre-flash packaging (std) → zero-alloc runtime (no_std)
+skinparam componentStyle rectangle
+skinparam defaultTextAlignment center
+
+package "workstation / build server — std tier" {
+  cloud "mawaqit.net" as MW
+  component "MawaqitClient / parse_page" as FETCH
+  component "ConfData (full year, wire-tolerant)" as CONF
+  component "pack_for_mcu\n--scope week|months|year\n--compress none|delta\n--format bin|rust|c\n--clamp (Dec 31 rule)" as PACKER #FFE9C8
+}
+
+file "prayer_data.bin\nraw flash / LittleFS / NVS" as BIN
+file "prayer_data.rs\npub static PRAYER_DATA: &[u8]" as RS
+file "prayer_data.h\nstatic const uint8_t[]" as CH
+
+package "MCU firmware — heapless tier (#![no_std])" {
+  component "Flash ROM\nmemory-mapped &[u8]" as FLASH
+  component "CompactCalendarView::from_bytes\nmagic · version · bounds · CRC-32 · date" as VIEW #DDF0DD
+  component "times_for_date(date)\nO(1) record read\n(direct) or on-stack decode (fajr-relative)" as LOOKUP
+  component "CompactDayTimes\n6 adhan u16 · 5 iqama bitfields\n(VALID bit 14 · ROLLOVER bit 15)" as DAY
+  component "heapless::String<5>\n\"05:42\" — 0 bytes heap" as STR
+  component "OLED / e-paper / buzzer / relay" as HW
+  component "RTC\ncurrent date" as RTC
+}
+
+MW --> FETCH
+FETCH --> CONF
+CONF --> PACKER
+PACKER --> BIN
+PACKER --> RS
+PACKER --> CH
+RS ..> FLASH : compiled in
+BIN ..> FLASH : flashed
+CH ..> FLASH : #include'd
+FLASH --> VIEW
+RTC --> LOOKUP
+VIEW --> LOOKUP
+LOOKUP --> DAY
+DAY --> STR
+STR --> HW
+
+note bottom of PACKER
+  Year-end contract: a scope crossing Dec 31 fails fast with the spec's
+  error text unless --clamp truncates the range (upstream publishes the
+  current calendar year only).
+end note
+note bottom of VIEW
+  The packer refuses to emit a payload it cannot load back: every artifact
+  passes CompactCalendarView::from_bytes (CRC + layout) before it is
+  written.
+end note
+@enduml

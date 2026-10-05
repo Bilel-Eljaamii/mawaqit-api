@@ -1,0 +1,21 @@
+@startuml snapshot-store-flow
+title Snapshot store flow — best-effort, atomic, None on any failure
+start
+:store(dir, slug, conf);
+:conf_to_storage:\nstruct serialized (raw nulled)\n+ raw extras or_insert'ed\nmodeled keys always win;
+if (serialize fails?) then (yes ⇒ None)
+  #FFDDDD:nothing written;
+  stop
+else (no)
+  :envelope v1:\n{version, mosque_slug, fetched_at, conf};
+  :write dir/{hash:016x}.json.tmp;
+  if (IO error?) then (yes ⇒ None)
+    #FFDDDD:nothing written;
+    stop
+  else (no)
+    :rename tmp → json (atomic);
+    #DDFFDD:Some(fetched_at);
+    stop
+  endif
+endif
+@enduml

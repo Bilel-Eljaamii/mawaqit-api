@@ -1,6 +1,6 @@
 # Implementation Plan: `no_std` MCU Support with `heapless` & Pre-Flash Packaging
 
-- **Status:** Approved (Hardened with Brutal QE Review Fixes)
+- **Status:** Implemented (v0.4.2) — deltas from this plan are recorded in [ADR-0014](../adr/0014-ddd-layering-and-plantuml.md): DDD layer modules (`time.rs`/`slug.rs`), serde_json made `alloc`-optional, the 12-byte delta layout replaced by the 20-byte fajr-relative layout, and the `just targets-mcu` gate added to `verify`
 - **Date:** 2026-10-05
 - **Goal:** Enable embedded microcontrollers (ESP32, RP2040, STM32, RISC-V) to run `mawaqit-api` with `#![no_std]`, while keeping `std` as the default feature in the same crate and directory.
 

@@ -1,0 +1,25 @@
+@startuml request-flow-search
+title Mosque search — cache-first, capped, one bad element fails the call
+participant App
+participant "MawaqitClient" as C
+participant "searches cache (30 min)" as SC
+participant "mawaqit.net" as S
+
+App -> C : search_mosques("Paris")
+C -> C : trim → empty? ⇒ Ok([])
+C -> SC : get("paris")
+alt cache hit
+  SC --> C : Vec<Mosque>
+  C --> App : Ok(mosques)
+else miss
+  C -> S : GET /api/2.0/mosque/search?word=Paris
+  S --> C : 200 JSON array (1 MiB cap, UTF-8 enforced)
+  C -> C : serde Vec<Mosque> — one bad element ⇒ whole Err
+  C -> SC : insert("paris", mosques)
+  C --> App : Ok(mosques)
+end
+note over C, S
+  404 ⇒ MosqueNotFound · other !2xx ⇒ Api{status}
+  — both checked before the body is read
+end note
+@enduml

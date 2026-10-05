@@ -1,0 +1,39 @@
+@startuml calendar-row-shapes
+title Row-shape decision tree (build_daily_times) — ADR-0010 display contract
+start
+:calendar row (Vec<String>);
+if (len ≥ 6 AND row[1] parses as HH:MM?) then (yes — has shuruq column)
+  :remove index 1 → prayers;
+  switch (prayers.len())
+  case (6 — imsak/Diyanet)
+    :fajr = İmsak · shurouq = Güneş\ndhuhr, asr, maghrib, isha = rest;
+  case (5 — normal)
+    :fajr = prayers[0] · shurouq = row[1]\ndhuhr, asr, maghrib, isha = rest;
+  case (other)
+    #FFDDDD:Err(Parse);
+    stop
+  endswitch
+else (no — plain list)
+  switch (row.len())
+  case (6)
+    :positional fajr, shurouq, …, isha;
+  case (5)
+    if (page-level shuruq present?) then (yes)
+      :5 prayers + shuruq from page;
+    else (no)
+      #FFDDDD:Err(Parse — no shuruq);
+      stop
+    endif
+  case (other)
+    #FFDDDD:Err(Parse);
+    stop
+  endswitch
+endif
+if (all 6 surfaced fields strict HH:MM?) then (yes — F4 contract)
+  #DDFFDD:DailyPrayerTimes;
+  stop
+else (no)
+  #FFDDDD:Err — day rejected whole\n(dropped from month view / times_for_date ⇒ Err);
+  stop
+endif
+@enduml
