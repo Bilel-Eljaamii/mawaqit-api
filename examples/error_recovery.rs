@@ -47,6 +47,9 @@ fn describe(err: &MawaqitError) -> &'static str {
             "unknown or oversized adhan voice — permanent, fix the id"
         }
         MawaqitError::Parse(_) => "malformed payload — permanent",
+        MawaqitError::Compact(_) => {
+            "corrupt MQTC blob — repack from a fresh page, permanent"
+        }
     }
 }
 

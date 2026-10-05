@@ -1,3 +1,13 @@
+#[cfg(not(feature = "std"))]
+use alloc::{
+    collections::BTreeMap,
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
+#[cfg(feature = "std")]
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 /// A mosque as returned by the keyless search endpoint
@@ -113,7 +123,7 @@ pub struct Announcement {
 
 /// Raw API shape: a month is an object keyed by day-of-month ("1".."31"),
 /// each day an ordered list of "HH:MM" strings.
-pub type RawMonth = std::collections::BTreeMap<String, Vec<String>>;
+pub type RawMonth = BTreeMap<String, Vec<String>>;
 pub type RawCalendar = Vec<RawMonth>;
 
 /// The six adhan times of one day, in API order.

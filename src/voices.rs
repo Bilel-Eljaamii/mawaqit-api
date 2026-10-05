@@ -6,18 +6,24 @@
 //!
 //! Al Afasy is omitted by product decision (2026-10-05).
 
+#[cfg(any(feature = "std", feature = "alloc"))]
+use alloc::{format, string::String};
+#[cfg(feature = "std")]
 use std::path::{Path, PathBuf};
 
+#[cfg(any(feature = "std", feature = "alloc"))]
+use crate::models::ConfData;
+#[cfg(feature = "std")]
 use crate::{
     MawaqitClient,
     error::{MawaqitError, Result},
-    models::ConfData,
 };
 
 /// The public CDN root the mosque-screen voices are served from.
 pub const CDN_URL_BASE: &str = "https://cdn.mawaqit.net/audio";
 
 /// Hard cap for one downloaded voice file (real files are ~2–5 MB).
+#[cfg(feature = "std")]
 const MAX_VOICE_BYTES: usize = 8 * 1024 * 1024;
 
 /// One selectable adhan recording.
@@ -66,6 +72,7 @@ pub const ADHAN_VOICES: [AdhanVoice; 8] = [
 /// The CDN URL for a catalog voice. Unknown ids are rejected: a caller may
 /// pass a hostile string here, and a URL is only ever built from the static
 /// catalog.
+#[cfg(any(feature = "std", feature = "alloc"))]
 pub fn adhan_voice_url(id: &str) -> Option<String> {
     ADHAN_VOICES
         .iter()
@@ -76,6 +83,7 @@ pub fn adhan_voice_url(id: &str) -> Option<String> {
 /// The voice the mosque itself uses (`adhanVoice` on the mosque page),
 /// validated against the catalog; `None` when the mosque uses the default
 /// (`null`) or publishes an unknown id.
+#[cfg(any(feature = "std", feature = "alloc"))]
 pub fn voice_id_from_conf(conf: &ConfData) -> Option<&'static str> {
     let raw = conf.raw.get("adhanVoice")?.as_str()?;
     ADHAN_VOICES.iter().find(|v| v.id == raw).map(|v| v.id)
@@ -86,6 +94,7 @@ pub fn voice_id_from_conf(conf: &ConfData) -> Option<&'static str> {
 /// cached. The download goes through the client's HTTP stack, so a proxy
 /// (Tor) applies. Playback fallback is the caller's concern: on `Err`, play
 /// the builtin instead.
+#[cfg(feature = "std")]
 pub async fn download_voice(
     client: &MawaqitClient,
     id: &str,

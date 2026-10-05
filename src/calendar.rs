@@ -1,3 +1,14 @@
+#[cfg(not(feature = "std"))]
+use alloc::{
+    collections::{BTreeMap, BTreeSet},
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
+#[cfg(feature = "std")]
+use std::collections::{BTreeMap, BTreeSet};
+
 use chrono::{Datelike, Duration, NaiveDate, NaiveTime, Timelike};
 
 use crate::{
@@ -7,11 +18,8 @@ use crate::{
         DayIqamaTimes, DayTimes, MonthIqamaTimes, MonthTimes, RawCalendar,
         TodayTimes,
     },
+    time::{is_displayable_hhmm, parse_hhmm},
 };
-
-pub(crate) fn parse_hhmm(s: &str) -> Option<NaiveTime> {
-    NaiveTime::parse_from_str(s.trim(), "%H:%M").ok()
-}
 
 fn time_string(t: NaiveTime) -> String {
     t.format("%H:%M").to_string()
@@ -29,20 +37,6 @@ fn time_string(t: NaiveTime) -> String {
 ///
 /// Rows without the shuruq column are treated as plain prayer lists, with
 /// sunrise taken from the page-level `shuruq` field.
-///
-/// Exactly `HH:MM` with in-range values — the display contract the red-team
-/// suite pins (F4). Lenient parses (`7:5`, leading spaces) are fine for
-/// internal time math, never for surfaced strings.
-pub(crate) fn is_displayable_hhmm(s: &str) -> bool {
-    let b = s.as_bytes();
-    b.len() == 5
-        && b[2] == b':'
-        && b[..2].iter().all(|c| c.is_ascii_digit())
-        && b[3..].iter().all(|c| c.is_ascii_digit())
-        && s[..2].parse::<u8>().is_ok_and(|h| h < 24)
-        && s[3..].parse::<u8>().is_ok_and(|m| m < 60)
-}
-
 pub(crate) fn daily_from_row(
     row: &[String],
     conf_shuruq: Option<&str>,
@@ -213,10 +207,8 @@ fn raw_month(
 /// deterministically.
 pub fn month_times(conf: &ConfData, month: u32) -> Result<MonthTimes> {
     let raw = raw_month(&conf.calendar, month)?;
-    let mut by_day: std::collections::BTreeMap<u32, DailyPrayerTimes> =
-        std::collections::BTreeMap::new();
-    let mut seen: std::collections::BTreeSet<u32> =
-        std::collections::BTreeSet::new();
+    let mut by_day: BTreeMap<u32, DailyPrayerTimes> = BTreeMap::new();
+    let mut seen: BTreeSet<u32> = BTreeSet::new();
     for (key, values) in raw {
         let Ok(day) = key.parse::<u32>() else {
             continue;
@@ -229,8 +221,7 @@ pub fn month_times(conf: &ConfData, month: u32) -> Result<MonthTimes> {
             by_day.insert(day, times);
         }
     }
-    let kept: std::collections::BTreeSet<u32> =
-        by_day.keys().copied().collect();
+    let kept: BTreeSet<u32> = by_day.keys().copied().collect();
     // Days that were on the wire but surface no times (F4) are reported,
     // not silently lost (M2).
     let dropped: Vec<u32> = seen.difference(&kept).copied().collect();
@@ -243,26 +234,20 @@ pub fn month_times(conf: &ConfData, month: u32) -> Result<MonthTimes> {
 
 /// Resolved iqama data for one month: display times, minutes from midnight
 /// of the adhan's day (rollover included), and the dropped-day list.
-type IqamaMonth = (
-    std::collections::BTreeMap<u32, DailyIqamaTimes>,
-    std::collections::BTreeMap<u32, [i64; 5]>,
-    Vec<u32>,
-);
+type IqamaMonth =
+    (BTreeMap<u32, DailyIqamaTimes>, BTreeMap<u32, [i64; 5]>, Vec<u32>);
 
 fn resolved_iqama_month(conf: &ConfData, month: u32) -> Result<IqamaMonth> {
     let iqama_calendar =
         conf.iqama_calendar.as_ref().ok_or(MawaqitError::NoCalendar)?;
     let raw_iqama = raw_month(iqama_calendar, month)?;
     let adhan_month = month_times(conf, month)?;
-    let adhan_by_day: std::collections::HashMap<u32, &DailyPrayerTimes> =
+    let adhan_by_day: BTreeMap<u32, &DailyPrayerTimes> =
         adhan_month.days.iter().map(|d| (d.day, &d.times)).collect();
 
-    let mut times: std::collections::BTreeMap<u32, DailyIqamaTimes> =
-        std::collections::BTreeMap::new();
-    let mut minutes: std::collections::BTreeMap<u32, [i64; 5]> =
-        std::collections::BTreeMap::new();
-    let mut seen: std::collections::BTreeSet<u32> =
-        std::collections::BTreeSet::new();
+    let mut times: BTreeMap<u32, DailyIqamaTimes> = BTreeMap::new();
+    let mut minutes: BTreeMap<u32, [i64; 5]> = BTreeMap::new();
+    let mut seen: BTreeSet<u32> = BTreeSet::new();
     for (key, values) in raw_iqama {
         let Ok(day) = key.parse::<u32>() else {
             continue;
@@ -279,7 +264,7 @@ fn resolved_iqama_month(conf: &ConfData, month: u32) -> Result<IqamaMonth> {
             minutes.insert(day, m);
         }
     }
-    let kept: std::collections::BTreeSet<u32> = times.keys().copied().collect();
+    let kept: BTreeSet<u32> = times.keys().copied().collect();
     let dropped: Vec<u32> = seen.difference(&kept).copied().collect();
     Ok((times, minutes, dropped))
 }

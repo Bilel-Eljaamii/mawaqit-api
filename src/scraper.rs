@@ -1,3 +1,10 @@
+#[cfg(not(feature = "std"))]
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
+
 use serde_json::Value;
 
 use crate::{

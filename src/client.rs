@@ -11,7 +11,6 @@ use crate::{
 
 const API_URL_BASE: &str = "https://mawaqit.net/api";
 const SITE_URL_BASE: &str = "https://mawaqit.net";
-const PAGE_LANG: &str = "en";
 /// Requests without a browser-ish User-Agent get rejected by the site.
 const USER_AGENT: &str =
     "Mozilla/5.0 (X11; Linux x86_64; rv:132.0) Gecko/20100101 Firefox/132.0";
@@ -289,12 +288,12 @@ impl MawaqitClient {
         // placeholder under /en/ — it can never escape the mosque namespace
         // (dot-segments, query/fragment injection, encoded variants) and
         // always 404s into MosqueNotFound.
-        let slug = if is_valid_slug(mosque_id) {
+        let slug = if crate::slug::is_valid_slug(mosque_id) {
             mosque_id.to_string()
         } else {
             "-".repeat(mosque_id.len().clamp(4, 64))
         };
-        let url = page_url(&inner.site_base, &slug);
+        let url = crate::slug::page_url(&inner.site_base, &slug);
         let response = inner.http.get(&url).send().await?;
 
         let status = response.status();
@@ -374,31 +373,6 @@ impl std::fmt::Debug for MawaqitClient {
     }
 }
 
-/// The exact URL [`MawaqitClient::conf_data`] fetches for a slug. Exposed as
-/// a pure function so hostile-slug handling (`../`, `?`, `#`, giant or
-/// non-ASCII slugs) can be asserted without touching the network.
-pub fn page_url(site_base: &str, mosque_id: &str) -> String {
-    format!("{site_base}/{PAGE_LANG}/{mosque_id}")
-}
-
-/// Whether `slug` is a mosque page identifier in the shape mawaqit.net
-/// publishes (`grande-mosquee-de-paris`): lowercase letters and digits,
-/// single hyphens between segments, at most 128 bytes (review M1 — a
-/// hostile all-lowercase blob would otherwise be "valid" and reach the
-/// wire as a giant URL). FINDING F2: anything else must never reach the
-/// network verbatim — `../` escapes the mosque namespace and `?`/`#` swap
-/// the page under a legit-looking slug.
-pub fn is_valid_slug(slug: &str) -> bool {
-    !slug.is_empty()
-        && slug.len() <= 128
-        && slug
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-        && !slug.starts_with('-')
-        && !slug.ends_with('-')
-        && !slug.contains("--")
-}
-
 /// Effective (connect, request) timeouts: an explicit
 /// [`MawaqitClient::with_timeouts`] wins; otherwise a proxy raises the
 /// defaults (Tor circuits are slow).
@@ -416,7 +390,8 @@ fn resolve_timeouts(
 /// Validate a SOCKS5 proxy address and return the canonical URL for
 /// `reqwest::Proxy`. Pure — the fail-fast half of
 /// [`MawaqitClient::with_socks_proxy`], assertable without touching the
-/// network like [`is_valid_slug`]. Rules: scheme `socks5h` exactly
+/// network like [`crate::slug::is_valid_slug`]. Rules: scheme `socks5h`
+/// exactly
 /// (remote DNS — plain `socks5` or an http(s) proxy leaks resolution),
 /// non-empty host, no path/query/fragment, port defaulting to
 /// [`SOCKS_DEFAULT_PORT`].
@@ -470,13 +445,4 @@ async fn read_capped(response: reqwest::Response) -> Result<String> {
     }
     String::from_utf8(buf)
         .map_err(|e| MawaqitError::Parse(format!("response is not UTF-8: {e}")))
-}
-
-/// Convenience: minutes between two "HH:MM" times (b-a), handling midnight
-/// wrap.
-pub fn minutes_between(a: &str, b: &str) -> Option<i64> {
-    let a = calendar::parse_hhmm(a)?;
-    let b = calendar::parse_hhmm(b)?;
-    let diff = (b - a).num_minutes();
-    Some(if diff < 0 { diff + 24 * 60 } else { diff })
 }

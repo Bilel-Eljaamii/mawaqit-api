@@ -47,8 +47,13 @@ required-features = ["std"]
 
 [features]
 default = ["std"]
+# std: desktop/server/CLI — the domain (alloc tier) plus the transport
+# infrastructure (reqwest/tokio/fs) and the MQTC packer tooling. Per
+# ADR-0013's matrix, std includes the heapless feature so pack_for_mcu
+# sees the compact API without extra flags.
 std = [
     "alloc",
+    "heapless",
     "dep:reqwest",
     "dep:tokio",
     "chrono/std",
@@ -56,10 +61,18 @@ std = [
     "serde/std",
     "serde_json/std",
     "thiserror/std",
-    "dep:crc32fast",
-    "dep:heapless",
 ]
-alloc = ["chrono/alloc", "serde/alloc", "serde_json/alloc"]
+# alloc: no_std targets with an embedded heap (ESP32, RP2040) — dynamic
+# ConfData, parse_page, calendar resolution. Pulls in serde_json, which
+# cannot compile without an allocator.
+alloc = [
+    "chrono/alloc",
+    "serde/alloc",
+    "serde_json/alloc",
+    "dep:serde_json",
+]
+# heapless: pure zero-alloc MCU firmware — CompactCalendarView over
+# memory-mapped flash.
 heapless = ["dep:heapless", "dep:crc32fast"]
 
 [dependencies]
@@ -73,7 +86,9 @@ reqwest = { version = "0.13.5", features = [
     "socks",
 ], optional = true }
 serde = { version = "1.0.229", default-features = false, features = ["derive"] }
-serde_json = { version = "1.0.151", default-features = false }
+# Optional: no_std tiers without an allocator cannot compile serde_json at
+# all — it is wired into the `alloc` feature.
+serde_json = { version = "1.0.151", default-features = false, optional = true }
 thiserror = { version = "2.0.21", default-features = false }
 tokio = { version = "1.53.2", features = [
     "macros",

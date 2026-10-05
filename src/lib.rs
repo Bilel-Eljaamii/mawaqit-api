@@ -43,6 +43,7 @@ extern crate alloc;
 pub mod cache;
 #[cfg(any(feature = "std", feature = "alloc"))]
 mod calendar;
+#[cfg(feature = "std")]
 mod client;
 #[cfg(feature = "heapless")]
 pub mod compact;
@@ -53,14 +54,16 @@ mod error;
 mod models;
 #[cfg(any(feature = "std", feature = "alloc"))]
 mod scraper;
+/// Domain-core slug policy (ADR-0014) — pure, compiles in `core`.
+mod slug;
+/// Domain-core time policy (ADR-0014) — pure, compiles in `core`.
+mod time;
 pub mod voices;
 
 #[cfg(any(feature = "std", feature = "alloc"))]
 pub use calendar::{month_iqama_times, month_times, times_for_date};
 #[cfg(feature = "std")]
 pub use client::MawaqitClient;
-#[cfg(any(feature = "std", feature = "alloc"))]
-pub use client::{is_valid_slug, minutes_between, page_url};
 #[cfg(feature = "heapless")]
 pub use compact::*;
 pub use error::{MawaqitError, Result};
@@ -75,8 +78,12 @@ pub use models::{
 /// wrapper.
 #[cfg(any(feature = "std", feature = "alloc"))]
 pub use scraper::extract_conf_data as parse_page;
+pub use slug::is_valid_slug;
+#[cfg(any(feature = "std", feature = "alloc"))]
+pub use slug::page_url;
+pub use time::minutes_between;
 #[cfg(feature = "std")]
 pub use voices::download_voice;
-pub use voices::{
-    ADHAN_VOICES, AdhanVoice, adhan_voice_url, voice_id_from_conf,
-};
+pub use voices::{ADHAN_VOICES, AdhanVoice};
+#[cfg(any(feature = "std", feature = "alloc"))]
+pub use voices::{adhan_voice_url, voice_id_from_conf};
