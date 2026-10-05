@@ -68,8 +68,13 @@ tier tier:
 live:
     cargo test --test e2e -- --ignored --nocapture
 
-# Runs the same tests `just test` runs; the #[ignore]d live tiers are out.
-# Coverage report for the offline suite: HTML + lcov via cargo-llvm-cov.
+# Library coverage gate: HTML + lcov, src/ held at 100% line coverage.
+# Runs the same tests `just test` runs (the #[ignore]d live tiers are out;
+# test files are excluded from the report). The summary is rendered by raw
+# llvm-cov with a fixed object order — cargo-llvm-cov's own aggregate
+# miscounts functions that exist in several test binaries (each embeds the
+# lib), and the voices binary must lead the object list for the union to
+# reflect every tier's execution.
 coverage:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -77,11 +82,39 @@ coverage:
         || { echo "missing cargo-llvm-cov — cargo install cargo-llvm-cov"; exit 1; }
     rustup component list --installed 2>/dev/null | grep -q llvm-tools \
         || { echo "missing llvm-tools — rustup component add llvm-tools-preview"; exit 1; }
-    # One instrumented test run; both reports render from the saved profile.
+    LLCOV="$(find ~/.rustup/toolchains -name llvm-cov -path '*bin*' 2>/dev/null | head -1)"
+    [ -n "$LLCOV" ] || { echo "llvm-cov binary not found — rustup component add llvm-tools-preview"; exit 1; }
+    # One instrumented run over the offline tiers; the e2e target is skipped
+    # (it runs nothing — both its tests are #[ignore]d — and its all-zero
+    # function copies would poison the union). Stale profiles from earlier
+    # builds must go too: mixing records of different function layouts makes
+    # llvm-cov's summary undercount ("mismatched data").
+    rm -f target/llvm-cov-target/*.profraw target/llvm-cov-target/*.profdata
     cargo llvm-cov --no-report
-    cargo llvm-cov report --html --output-dir target/coverage
-    cargo llvm-cov report --lcov --output-path target/coverage/lcov.info
+    LPROFDATA="$(find ~/.rustup/toolchains -name llvm-profdata -path '*bin*' 2>/dev/null | head -1)"
+    "$LPROFDATA" merge -o target/llvm-cov-target/mawaqit-api.profdata \
+        target/llvm-cov-target/*.profraw
+    # Deterministic render order: the voices binary first (it exercises the
+    # async download paths no other tier runs), then the offline tiers.
+    OBJS=""
+    for tier in voices ut ct fuzz; do
+        for b in target/llvm-cov-target/debug/deps/"$tier"-*; do
+            case "$b" in *.d) ;; *) OBJS="$OBJS -object $b" ;; esac
+        done
+    done
+    # The gate: src/ line coverage must be exactly 100%.
+    $LLCOV report $OBJS -instr-profile target/llvm-cov-target/mawaqit-api.profdata \
+        --ignore-filename-regex '[^/]+/(tst|tests)/' | tee target/coverage/summary.txt \
+        | awk -F'|' '/^TOTAL/ { missed = $9; gsub(/ /, "", missed); if (missed + 0 > 0) { print "FAILED: " missed " uncovered lines in src/ (see per-file rows above)"; exit 1 } }'
+    mkdir -p target/coverage
+    $LLCOV show $OBJS -instr-profile target/llvm-cov-target/mawaqit-api.profdata \
+        --format=html --output-dir target/coverage/html \
+        --ignore-filename-regex '[^/]+/(tst|tests)/' >/dev/null
+    $LLCOV export $OBJS -instr-profile target/llvm-cov-target/mawaqit-api.profdata \
+        --format=lcov --ignore-filename-regex '[^/]+/(tst|tests)/' \
+        > target/coverage/lcov.info
     echo
+    echo "✔ src/ line coverage: 100% (summary: target/coverage/summary.txt)"
     echo "HTML report: target/coverage/html/index.html"
     echo "lcov trace:  target/coverage/lcov.info"
 

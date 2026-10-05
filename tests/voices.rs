@@ -127,3 +127,164 @@ async fn failing_download_leaves_no_partial_file() {
         "a failed download must not leave files behind"
     );
 }
+
+/// The pre-download guard: a 200 whose Content-Length claims more than the
+/// cap is rejected before any body is buffered (the real body here is
+/// a few dozen bytes).
+#[tokio::test]
+async fn download_rejects_oversize_content_length_before_downloading() {
+    let dir = temp_dir("precheck");
+    let mut response =
+        b"HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\n".to_vec();
+    response.extend_from_slice(b"Content-Length: 9437184\r\n"); // 9 MiB
+    response.extend_from_slice(b"Connection: close\r\n\r\n");
+    response.extend_from_slice(b"tiny");
+    let (base, _server) = spawn_mock(response);
+    let client = MawaqitClient::with_base_urls(base.clone(), base.clone())
+        .with_cdn_base(base.clone());
+
+    let err = download_voice(&client, "adhan-quds", &dir).await.unwrap_err();
+    assert!(
+        matches!(&err, MawaqitError::InvalidVoice(m) if m.contains("cap")),
+        "got {err:?}"
+    );
+    assert_eq!(
+        std::fs::read_dir(&dir).unwrap().count(),
+        0,
+        "nothing may be written for a rejected download"
+    );
+}
+
+/// No Content-Length header: the pre-download guard cannot fire, so the
+/// cap is enforced on the buffered body instead — 9 MiB delivered, 8 MiB
+/// cap.
+#[tokio::test]
+async fn download_enforces_the_cap_without_content_length() {
+    let dir = temp_dir("no-length");
+    // HTTP/1.1 without Content-Length + Connection: close: the body runs
+    // to EOF, so reqwest reads it all before the cap check.
+    let mut response =
+        b"HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\n".to_vec();
+    response.extend_from_slice(b"Connection: close\r\n\r\n");
+    response.extend_from_slice(&vec![0xFFu8; 9 * 1024 * 1024]);
+    let (base, _server) = spawn_mock(response);
+    let client = MawaqitClient::with_base_urls(base.clone(), base.clone())
+        .with_cdn_base(base.clone());
+
+    let err = download_voice(&client, "adhan-quds", &dir).await.unwrap_err();
+    assert!(
+        matches!(&err, MawaqitError::InvalidVoice(m) if m.contains("cap")),
+        "got {err:?}"
+    );
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+}
+
+/// An empty body (no Content-Length) is rejected as an empty file, not
+/// written as a 0-byte mp3.
+#[tokio::test]
+async fn download_rejects_an_empty_body() {
+    let dir = temp_dir("empty-body");
+    let (base, _server) = spawn_mock(
+        b"HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            .to_vec(),
+    );
+    let client = MawaqitClient::with_base_urls(base.clone(), base.clone())
+        .with_cdn_base(base.clone());
+
+    let err = download_voice(&client, "adhan-quds", &dir).await.unwrap_err();
+    assert!(
+        matches!(&err, MawaqitError::InvalidVoice(m) if m.contains("empty")),
+        "got {err:?}"
+    );
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+}
+
+/// create_dir_all fails: `dest_dir` sits under a regular file. The error is
+/// surfaced as Parse and nothing is written.
+#[tokio::test]
+async fn download_fails_when_the_destination_cannot_be_created() {
+    let root = temp_dir("mkdir-fail");
+    let blocker = root.join("not-a-dir");
+    std::fs::write(&blocker, b"x").unwrap();
+    let dir = blocker.join("sub"); // under a file ⇒ create_dir_all fails
+
+    let (base, _server) = spawn_mock(mp3_response(b"\xff\xfbshort"));
+    let client = MawaqitClient::with_base_urls(base.clone(), base.clone())
+        .with_cdn_base(base.clone());
+
+    let err = download_voice(&client, "adhan-quds", &dir).await.unwrap_err();
+    assert!(matches!(err, MawaqitError::Parse(_)), "got {err:?}");
+}
+
+/// The atomic-write tmp path is pre-occupied by a directory: the write
+/// fails, the error is surfaced as Parse and no partial file is left.
+#[tokio::test]
+async fn download_fails_when_the_tmp_path_is_a_directory() {
+    let dir = temp_dir("tmp-dir");
+    std::fs::create_dir_all(dir.join("adhan-quds.mp3.tmp")).unwrap();
+
+    let (base, _server) = spawn_mock(mp3_response(b"\xff\xfbshort"));
+    let client = MawaqitClient::with_base_urls(base.clone(), base.clone())
+        .with_cdn_base(base.clone());
+
+    let err = download_voice(&client, "adhan-quds", &dir).await.unwrap_err();
+    assert!(matches!(err, MawaqitError::Parse(_)), "got {err:?}");
+    assert!(
+        std::fs::read_dir(&dir).unwrap().count() == 1,
+        "only the blocking directory stays; no partial download file"
+    );
+}
+
+/// A directory occupies the final destination path: it is not treated as a
+/// cached voice (is_file), the download runs, and the atomic rename fails
+/// with a surfaced Parse error instead of replacing the directory.
+#[tokio::test]
+async fn download_fails_when_the_destination_is_a_directory() {
+    let dir = temp_dir("dest-dir");
+    std::fs::create_dir_all(dir.join("adhan-quds.mp3")).unwrap();
+
+    let (base, _server) = spawn_mock(mp3_response(b"\xff\xfbshort"));
+    let client = MawaqitClient::with_base_urls(base.clone(), base.clone())
+        .with_cdn_base(base.clone());
+
+    let err = download_voice(&client, "adhan-quds", &dir).await.unwrap_err();
+    assert!(matches!(err, MawaqitError::Parse(_)), "got {err:?}");
+    assert!(dir.join("adhan-quds.mp3").is_dir(), "the directory survives");
+}
+
+/// Connection refused mid-download: `send()` fails and the error surfaces
+/// as Http (no file written, no panic).
+#[tokio::test]
+async fn download_surfaces_a_transport_failure_as_http() {
+    let dir = temp_dir("refused");
+    // Port 1: connection refused instantly.
+    let client = MawaqitClient::with_base_urls(
+        "http://127.0.0.1:1".into(),
+        "http://127.0.0.1:1".into(),
+    )
+    .with_cdn_base("http://127.0.0.1:1".into());
+
+    let err = download_voice(&client, "adhan-quds", &dir).await.unwrap_err();
+    assert!(matches!(err, MawaqitError::Http(_)), "got {err:?}");
+    assert!(std::fs::read_dir(&dir).unwrap().count() == 0);
+}
+
+/// The server lies about Content-Length and closes early: `bytes()` fails
+/// on the truncated body and surfaces as Http.
+#[tokio::test]
+async fn download_surfaces_a_truncated_body_as_http() {
+    let dir = temp_dir("truncated");
+    // Headers promise 512 bytes; the server sends 8 and closes.
+    let mut response =
+        b"HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\n".to_vec();
+    response.extend_from_slice(b"Content-Length: 512\r\n");
+    response.extend_from_slice(b"Connection: close\r\n\r\n");
+    response.extend_from_slice(b"\xff\xfb\x90\x00fake");
+    let (base, _server) = spawn_mock(response);
+    let client = MawaqitClient::with_base_urls(base.clone(), base.clone())
+        .with_cdn_base(base.clone());
+
+    let err = download_voice(&client, "adhan-quds", &dir).await.unwrap_err();
+    assert!(matches!(err, MawaqitError::Http(_)), "got {err:?}");
+    assert!(std::fs::read_dir(&dir).unwrap().count() == 0);
+}

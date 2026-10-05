@@ -36,6 +36,15 @@ name = "fuzz"
 path = "tst/fuzz.rs"
 required-features = ["std"]
 
+# Declared (not auto-discovered) so every test target shares one lib build:
+# a second lib variant would split the function records across two coverage
+# hash families and llvm-cov's aggregate summary undercounts (see
+# `just coverage`).
+[[test]]
+name = "voices"
+path = "tests/voices.rs"
+required-features = ["std"]
+
 [features]
 default = ["std"]
 std = [

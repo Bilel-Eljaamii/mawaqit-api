@@ -96,11 +96,21 @@ pub async fn download_voice(
     };
     let dest = dest_dir.join(format!("{id}.mp3"));
 
-    if std::fs::metadata(&dest).is_ok_and(|meta| meta.len() > 0) {
+    // A directory (or any non-file) at the destination is not a cached
+    // voice — the download proceeds and the later steps fail loudly.
+    if std::fs::metadata(&dest)
+        .is_ok_and(|meta| meta.is_file() && meta.len() > 0)
+    {
         return Ok(dest);
     }
 
-    let response = client.get(&url).send().await?;
+    // Explicit matches instead of `?`: the Try-desugaring of `?` inside an
+    // async fn instruments generator-glue closures that never execute as
+    // functions, which permanently shows as uncovered lines.
+    let response = match client.get(&url).send().await {
+        Ok(response) => response,
+        Err(e) => return Err(MawaqitError::Http(e)),
+    };
     let status = response.status();
     if !status.is_success() {
         return Err(MawaqitError::Api { status: status.as_u16(), url });
@@ -115,7 +125,10 @@ pub async fn download_voice(
             "voice file exceeds the {MAX_VOICE_BYTES} byte cap"
         )));
     }
-    let bytes = response.bytes().await?;
+    let bytes = match response.bytes().await {
+        Ok(bytes) => bytes,
+        Err(e) => return Err(MawaqitError::Http(e)),
+    };
     if bytes.len() > MAX_VOICE_BYTES {
         return Err(MawaqitError::InvalidVoice(format!(
             "voice file of {} bytes exceeds the {MAX_VOICE_BYTES} byte cap",

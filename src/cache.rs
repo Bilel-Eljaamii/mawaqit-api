@@ -50,24 +50,25 @@ impl<V: Clone> TtlCache<V> {
     }
 
     pub fn insert(&self, key: String, value: V) {
-        let mut entries = match self.entries.lock() {
-            Ok(entries) => entries,
-            Err(_) => return,
-        };
+        // A poisoned mutex only means "no caching"; never propagate.
+        let _ = self.insert_if_healthy(key, value);
+    }
+
+    fn insert_if_healthy(&self, key: String, value: V) -> Option<()> {
+        let mut entries = self.entries.lock().ok()?;
         if !entries.map.contains_key(&key) {
             entries.order.push_back(key.clone());
         }
         entries.map.insert(key, (Instant::now(), value));
-        while entries.map.len() > self.max_entries {
-            match entries.order.pop_front() {
-                // Evicted one live entry; stale order entries are skipped
-                // and the loop keeps going.
-                Some(k) => {
-                    entries.map.remove(&k);
-                }
-                None => break,
-            }
+        // Every live entry keeps an order entry (pushed on first insert),
+        // so the loop always finds a victim while over the cap; stale
+        // order entries (expired/invalidated keys) are skipped for free.
+        while entries.map.len() > self.max_entries
+            && let Some(k) = entries.order.pop_front()
+        {
+            entries.map.remove(&k);
         }
+        Some(())
     }
 
     pub fn invalidate(&self, key: &str) {

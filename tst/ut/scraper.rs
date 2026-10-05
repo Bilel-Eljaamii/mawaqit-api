@@ -53,3 +53,36 @@ fn missing_conf_data_is_an_error() {
     let err = parse_page(&page, "some-mosque").unwrap_err();
     assert!(matches!(err, MawaqitError::ConfDataNotFound(_)));
 }
+
+/// Review H3 follow-up: the exotic invisible-Cf ranges (variation tags,
+/// Egyptian format controls, musical/annotation controls) must not survive
+/// into display strings either.
+#[test]
+fn exotic_invisible_characters_are_stripped_from_display_fields() {
+    let evil = "a\u{E0001}b\u{E007F}c\u{13430}d\u{1D173}e";
+    let page = format!(
+        r#"<html><script>var confData = {{"times":["06:09","07:41","13:47","16:58","19:45"],"shuruq":"07:41","calendar":[{{"1":["07:05","08:44","12:59","14:48","17:08","18:35"]}}],"name":"{evil}"}};</script></html>"#
+    );
+    let parsed = parse_page(&page, "x").expect("parses");
+    let name = parsed.name.as_deref();
+    assert_eq!(name, Some("abcde"), "{name:?}");
+}
+
+/// F6 across every announcement text field: title, content, image and video
+/// are all sanitized at the boundary — a field with no hostile characters
+/// passes through untouched.
+#[test]
+fn announcement_text_fields_are_all_sanitized() {
+    let hostile_title = "\u{202E}eltitle\u{202C}";
+    let hostile_body = "body\u{200B}text\u{202D}";
+    let page = format!(
+        r#"<html><script>var confData = {{"times":["06:09","07:41","13:47","16:58","19:45"],"calendar":[{{"1":["07:05","08:44","12:59","14:48","17:08","18:35"]}}],"announcements":[{{"id":7,"title":"{hostile_title}","content":"{hostile_body}","image":"https://x.test/a.jpg","video":"https://x.test/v.mp4"}}]}};</script></html>"#
+    );
+    let conf = parse_page(&page, "x").unwrap();
+    assert_eq!(conf.announcements.len(), 1);
+    let ann = &conf.announcements[0];
+    assert_eq!(ann.title.as_deref(), Some("eltitle"));
+    assert_eq!(ann.content.as_deref(), Some("bodytext"));
+    assert_eq!(ann.image.as_deref(), Some("https://x.test/a.jpg"));
+    assert_eq!(ann.video.as_deref(), Some("https://x.test/v.mp4"));
+}

@@ -9,7 +9,7 @@ use std::{
     thread,
 };
 
-use mawaqit_api::{MawaqitClient, disk};
+use mawaqit_api::{ConfData, MawaqitClient, disk};
 
 use crate::common::temp_dir;
 
@@ -147,4 +147,17 @@ async fn without_disk_cache_the_client_behaves_as_before() {
         client.conf_data_dated(SLUG).await.is_err(),
         "no cache, no fallback"
     );
+}
+
+/// A default (empty) conf stores and reloads: the storage overlay must
+/// tolerate a `raw` that is not an object at all.
+#[test]
+fn default_conf_roundtrips_through_the_snapshot() {
+    let dir = temp_dir("ct", "empty-conf");
+    let stored = disk::store(&dir, SLUG, &ConfData::default())
+        .expect("an empty conf stores");
+    let (fetched_at, conf) = disk::load(&dir, SLUG).expect("reload");
+    assert_eq!(fetched_at, stored);
+    assert!(conf.times.is_empty());
+    assert!(conf.calendar.is_empty());
 }

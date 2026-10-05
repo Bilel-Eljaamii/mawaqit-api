@@ -89,3 +89,13 @@ fn invalid_proxy_fails_fast() {
         .expect_err("plain socks5 must be rejected");
     assert!(matches!(err, MawaqitError::InvalidProxy(_)));
 }
+
+#[test]
+fn default_and_debug_are_wired() {
+    // Default must equal new() (keyless, no proxy, offline layer off).
+    let client = MawaqitClient::default();
+    let dump = format!("{client:?}");
+    assert!(dump.starts_with("MawaqitClient"), "{dump}");
+    assert!(dump.contains("proxy: None"), "{dump}");
+    assert!(dump.contains("disk_cache: None"), "{dump}");
+}

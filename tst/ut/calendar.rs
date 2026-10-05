@@ -311,3 +311,42 @@ fn dropped_days_are_reported_and_error_as_invalid_day() {
         .unwrap_err();
     assert!(matches!(err, MawaqitError::NoCalendar), "{err}");
 }
+
+/// A 5-column row with no page-level `shuruq` has no sunrise to fill
+/// column two: the row is rejected and reported (`dropped`), never
+/// fabricated.
+#[test]
+fn five_column_row_without_page_shuruq_is_rejected() {
+    let r = conf(json!({
+        "times": ["06:30", "08:00", "13:00", "15:30", "17:45"],
+        "calendar": [ month_map(&[
+            ("1", vec!["06:30", "13:00", "15:30", "17:45", "19:15"]),
+        ]) ]
+    }));
+    let month = month_times(&r, 1).unwrap();
+    assert!(month.days.is_empty(), "no sunrise, no day");
+    assert_eq!(month.dropped, vec![1], "the rejected day is reported");
+    let err = times_for_date(&r, NaiveDate::from_ymd_opt(2026, 1, 1).unwrap())
+        .unwrap_err();
+    assert!(matches!(err, MawaqitError::InvalidDay(1)), "{err}");
+}
+
+/// F5 on the iqama calendar: `"1"`, `"01"` and `"+1"` are one day, and
+/// the canonical decimal key wins over its variants.
+#[test]
+fn iqama_duplicate_day_keys_dedupe_to_one_day() {
+    let r = conf(json!({
+        "times": ["06:30", "08:00", "13:00", "15:30", "17:45"],
+        "calendar": [ month_map(&[
+            ("1", vec!["06:30","08:00","13:00","15:30","17:45","19:15"]),
+        ]) ],
+        "iqamaCalendar": [ month_map(&[
+            ("+1", vec!["07:00", "07:00", "07:00", "07:00", "07:00"]),
+            ("01", vec!["06:00", "06:00", "06:00", "06:00", "06:00"]),
+            ("1",   vec!["06:40", "+15", "13:20", "+20", "18:00"]),
+        ]) ]
+    }));
+    let days = month_iqama_times(&r, 1).unwrap().days;
+    assert_eq!(days.len(), 1, "day 1 appears {} times", days.len());
+    assert_eq!(days[0].times.fajr, "06:40", "canonical key must win");
+}

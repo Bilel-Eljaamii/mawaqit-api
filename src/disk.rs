@@ -95,9 +95,9 @@ pub fn store(dir: &Path, slug: &str, conf: &ConfData) -> Option<NaiveDate> {
     };
     let json = serde_json::to_string(&envelope).ok()?;
     let path = snapshot_path(dir, slug);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).ok()?;
-    }
+    // Always Some: snapshot_path joins the directory with a file name.
+    let parent = path.parent()?;
+    std::fs::create_dir_all(parent).ok()?;
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, json).ok()?;
     // Durability before the atomic swap (review L1): without fsync a power

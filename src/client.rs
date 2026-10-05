@@ -444,8 +444,11 @@ fn validate_socks_proxy(addr: &str) -> Result<String> {
              no path, query or fragment"
         )));
     }
-    if url.port().is_none() && url.set_port(Some(SOCKS_DEFAULT_PORT)).is_err() {
-        return Err(reject(format!("{addr:?}: cannot apply the default port")));
+    if url.port().is_none() {
+        // set_port only errors on cannot-be-a-base URLs, which the host
+        // check above has already excluded.
+        url.set_port(Some(SOCKS_DEFAULT_PORT))
+            .expect("socks5h host checked; set_port cannot fail");
     }
     Ok(url.as_str().to_string())
 }

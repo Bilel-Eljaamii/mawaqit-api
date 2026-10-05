@@ -8,9 +8,28 @@ versioning: [semver](https://semver.org/).
 
 ### Added
 
-- `just coverage` — HTML + lcov coverage report for the offline suite via
-  `cargo-llvm-cov` (same tests as `just test`; the `#[ignore]`d live tiers
-  are out).
+- `just coverage` — a hard coverage gate: one instrumented test run
+  (`cargo-llvm-cov`), HTML + lcov reports rendered over `src/` only (test
+  files excluded), and a **100%-line-coverage requirement** — the recipe
+  fails if a single `src/` line is uncovered. The summary is rendered by
+  raw `llvm-cov` with a fixed object order, working around llvm-cov's
+  aggregate undercounting for functions that exist in several test
+  binaries.
+
+### Fixed
+
+- The last unexercised library paths are now covered by tests:
+  `today()`/`month_iqama()` over a full-year mock, `invalidate(Some(slug))`
+  cache isolation, empty-search-word short-circuit, `Default`/`Debug`
+  wiring, the 5-column-row-without-shuruq rejection, iqama day-key dedupe,
+  announcement `content`/`image`/`video` sanitization, variation-tag
+  character stripping, empty-`raw` snapshot round-trip, and the voice
+  downloader's fault paths (uncreatable destination, blocked tmp path,
+  destination-as-directory, oversized `Content-Length`, missing
+  `Content-Length` over the cap, empty body, transport failure, truncated
+  body). Two defensive branches that could never execute were restructured
+  into equivalent always-executed forms (cache mutex-poison guard, voice
+  default-port arm, snapshot parent handling).
 
 ## [0.4.1] - 2026-10-05
 

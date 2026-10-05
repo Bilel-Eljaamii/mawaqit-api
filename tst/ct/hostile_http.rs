@@ -465,3 +465,85 @@ async fn finding_f3_documented_cap_rejects_oversized_response() {
     )]);
     assert!(mock.client().conf_data("victim").await.is_err());
 }
+
+/// A valid page whose calendar covers all 12 months, days 1..=31 — so the
+/// `today()`/`month_iqama()` transport wrappers resolve for any real-world
+/// local date.
+fn full_year_page() -> String {
+    let mut months = Vec::new();
+    let mut iqama_months = Vec::new();
+    for _month in 1..=12 {
+        let mut days = serde_json::Map::new();
+        let mut iqama_days = serde_json::Map::new();
+        for day in 1..=31 {
+            days.insert(
+                day.to_string(),
+                serde_json::json!([
+                    "05:00", "06:30", "12:00", "15:30", "18:00", "19:30",
+                ]),
+            );
+            iqama_days.insert(
+                day.to_string(),
+                serde_json::json!([
+                    "05:10", "12:10", "15:40", "18:10", "19:40",
+                ]),
+            );
+        }
+        months.push(serde_json::Value::Object(days));
+        iqama_months.push(serde_json::Value::Object(iqama_days));
+    }
+    let conf = serde_json::json!({
+        "times": ["05:00", "06:30", "12:00", "15:30", "18:00", "19:30"],
+        "calendar": months,
+        "iqamaCalendar": iqama_months,
+        "name": "Full Year Mosque"
+    });
+    format!("<html><script>var confData = {conf};</script></html>")
+}
+
+#[tokio::test]
+async fn search_empty_word_short_circuits_without_a_request() {
+    let mock = spawn_mock(vec![("/2.0/mosque/search", ok_json(&search_ok()))]);
+    let mosques =
+        mock.client().search_mosques("   ").await.expect("empty word");
+    assert!(mosques.is_empty(), "an empty word is no search at all");
+    assert!(
+        mock.requests().is_empty(),
+        "an empty word must not touch the network"
+    );
+}
+
+#[tokio::test]
+async fn today_and_month_iqama_resolve_through_the_public_methods() {
+    let mock = spawn_mock(vec![("/en/fullyear", ok_html(&full_year_page()))]);
+    let client = mock.client();
+
+    let today = client.today("fullyear").await.expect("today");
+    assert_eq!(today.adhan.fajr.len(), 5, "strict HH:MM surfaced");
+    assert!(today.iqama.is_some(), "iqama resolves for today");
+
+    let month = client.month_iqama("fullyear", 1).await.expect("iqama month");
+    assert_eq!(month.days.len(), 31);
+    assert_eq!(month.days[0].times.dhuhr, "12:10");
+}
+
+#[tokio::test]
+async fn invalidate_drops_one_slug_and_keeps_the_others() {
+    let mock = spawn_mock(vec![
+        ("/en/mosque-a", ok_html(&trap_page())),
+        ("/en/mosque-b", ok_html(&trap_page())),
+    ]);
+    let client = mock.client();
+    let _ = client.conf_data("mosque-a").await.unwrap();
+    let _ = client.conf_data("mosque-b").await.unwrap();
+    assert_eq!(mock.requests().len(), 2, "each slug fetched once");
+
+    client.invalidate(Some("mosque-a"));
+    let _ = client.conf_data("mosque-a").await.unwrap();
+    let _ = client.conf_data("mosque-b").await.unwrap();
+    assert_eq!(
+        mock.requests().len(),
+        3,
+        "mosque-a refetched after invalidation, mosque-b still cached"
+    );
+}
