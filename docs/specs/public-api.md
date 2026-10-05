@@ -1,18 +1,42 @@
 # Spec: Public API surface
 
-Crate `mawaqit-api` 0.2.0 — everything an embedder can touch. Re-exported
-from `src/lib.rs`; nothing else is public except `mawaqit_api::disk`.
+Crate `mawaqit-api` 0.4.0 — everything an embedder can touch. Re-exported
+from `src/lib.rs`.
 
-## Entry point
+## Cargo Feature Flags
+
+| Feature | Default | Purpose & Targets |
+| :--- | :--- | :--- |
+| `std` | **Yes** | Standard library runtime (`reqwest`, `tokio`, `std::fs`, `MawaqitClient`, disk snapshots, cache). Used for Linux, Windows, macOS, server, and desktop. Implies `alloc` and `heapless`. |
+| `alloc` | No | Enables dynamic data structures (`String`, `Vec`, `BTreeMap`, `ConfData`, `parse_page`) in `#![no_std]` environments with an embedded heap (e.g. ESP32 with `esp-alloc`). |
+| `heapless` | No | Enables pure zero-allocation compact calendar lookups (`CompactCalendarView`) and `heapless::String<5>` formatting for bare-metal microcontrollers (e.g. Cortex-M, RISC-V). |
+
+## Entry point (`std`)
 
 ```rust
+// Requires feature = "std"
 let client = MawaqitClient::new();                       // keyless
 let client = MawaqitClient::with_base_urls(api, site);   // test seam: custom hosts
 let client = client.with_disk_cache(dir);                // opt-in offline layer
 ```
 
 `MawaqitClient` is `Clone` (cheap: `Arc` internals) and `Default`. All data
-methods are `async` and safe to share across tasks.
+methods are `async` and safe to share across tasks. Available only when
+`feature = "std"` is enabled.
+
+## Entry point (`no_std` + `heapless` on MCU)
+
+```rust
+// Microcontroller with 0 heap allocations
+use mawaqit_api::compact::{CompactCalendarView, CompactTime};
+
+static PRAYER_DATA: &[u8] = include_bytes!("prayer_data.bin");
+
+let calendar = CompactCalendarView::from_bytes(PRAYER_DATA).unwrap();
+if let Some(today) = calendar.times_for_date(current_date) {
+    let fajr_str: heapless::String<5> = today.adhan.fajr.to_hhmm(); // "05:42"
+}
+```
 
 ## `MawaqitClient` methods
 
@@ -46,6 +70,7 @@ methods are `async` and safe to share across tasks.
 ## Models (`src/models.rs`)
 
 ### `Mosque` — one search result
+
 All fields optional; unknown keys preserved in `extra` (`#[serde(flatten)]`).
 
 | Field | Type | Meaning |
@@ -60,6 +85,7 @@ Accessors (total, never panic): `display_name()` = label → name → slug →
 available.
 
 ### `ConfData` — the parsed page payload
+
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `times` | `Vec<String>` | today's times; ≥ 5 entries required at parse time; **len 6 ⇒ `imsak_mode = true`** |
@@ -72,6 +98,7 @@ available.
 | `raw` | `serde_json::Value` | the complete original object — every unmodeled field survives here |
 
 ### Time rows
+
 - `DailyPrayerTimes` — `{ fajr, shurouq, dhuhr, asr, maghrib, isha }`, all
   strict `HH:MM` (**display contract**, ADR-0010).
 - `DailyIqamaTimes` — `{ fajr, dhuhr, asr, maghrib, isha }`, resolved
@@ -86,13 +113,32 @@ available.
 `Serialize`-only (computed views); `ConfData`/`Mosque`/`Announcement` are
 `Serialize + Deserialize`.
 
+## Compact MCU API (`src/compact.rs`, feature = "heapless")
+
+Zero-allocation types for microcontrollers reading from flash ROM or RAM:
+
+| Type | Purpose | Methods |
+| :--- | :--- | :--- |
+| `CompactCalendarView<'a>` | Zero-copy borrowing view over binary payload (`MQTC`) | `from_bytes(&'a [u8]) -> Result<Self, CompactError>`, `times_for_date(NaiveDate) -> Option<CompactDayTimes>`, `day_count() -> usize`, `start_date() -> NaiveDate` |
+| `CompactTime(u16)` | Minutes from midnight (`0..=1439`) | `hours() -> u8`, `minutes() -> u8`, `minutes_from_midnight() -> u16`, `to_hhmm() -> heapless::String<5>` |
+| `CompactDayTimes` | Prayer times for one calendar day | `date: NaiveDate`, `adhan: CompactDayAdhan`, `iqama: Option<CompactDayIqama>` |
+| `CompactDayAdhan` | 6 adhan times | `fajr`, `shurouq`, `dhuhr`, `asr`, `maghrib`, `isha` |
+| `CompactDayIqama` | 5 iqama times | `fajr`, `dhuhr`, `asr`, `maghrib`, `isha` |
+
+Under `feature = "alloc"` / `"std"`, the module also provides:
+
+- `CompactScope`: `Week { start_date }`, `Months { year, start_month, count }`, `Year { year }`, `Custom { start_date, end_date }`.
+- `CompactCalendarBuilder`: `from_conf(&ConfData, scope) -> Result<Self, MawaqitError>`, `to_bytes() -> Vec<u8>`, `to_rust_code(var_name) -> String`, `to_c_header(var_name) -> String`.
+
+See [`compact-binary-and-mcu.md`](compact-binary-and-mcu.md) for full binary layout and CLI packer details.
+
 ## Error taxonomy (`src/error.rs`)
 
-`type Result<T> = std::result::Result<T, MawaqitError>`.
+`type Result<T> = core::result::Result<T, MawaqitError>`.
 
 | Variant | Fields | Produced when |
 | --- | --- | --- |
-| `Http` | source `reqwest::Error` | connect/timeout/redirect-loop/body errors (includes truncated bodies, connection reset) |
+| `Http` | source `reqwest::Error` | *(feature = "std" only)* connect/timeout/redirect-loop/body errors (includes truncated bodies, connection reset) |
 | `MosqueNotFound` | slug/word | HTTP 404 from search or page fetch; invalid slug (placeholder-fetched, then 404) |
 | `ConfDataNotFound` | slug | page fetched fine but no `confData = {…}` assignment, or unbalanced literal |
 | `InvalidMonth` | `u32` | month outside 1–12 |
@@ -100,6 +146,7 @@ available.
 | `Api` | `status: u16, url` | any other non-success HTTP status |
 | `InvalidProxy` | message *(0.3.0)* | `with_socks_proxy` got an address that is not `socks5h://host[:port]` — wrong scheme (`socks5`/http(s)/none), empty host, path/query/fragment, or unparseable |
 | `Parse` | message | invalid JSON, non-UTF-8 body, response over the 20 MB cap, `times` < 5 entries, malformed calendar rows surfaced through month extraction |
+| `Compact` | `CompactError` *(0.4.0)* | invalid compact binary header, buffer too small, unsupported version, date out of bounds |
 
 Retry guidance (used by `examples/error_recovery.rs`): `Http` and `Api`
 (5xx/429) are transient → retry with backoff; `MosqueNotFound`,
@@ -108,6 +155,6 @@ mean the site contract changed or the response is hostile — do not hammer.
 
 ## Versioning note
 
-`SnapshotEnvelope::version` (disk layer) and the wire tolerance rules are
-the two compatibility surfaces; everything above them (struct fields,
-accessor behavior) follows semver from 0.2.0.
+`SnapshotEnvelope::version` (disk layer), `MQTC` version (compact binary),
+and the wire tolerance rules are the compatibility surfaces; everything
+above them (struct fields, accessor behavior) follows semver from 0.2.0.

@@ -6,9 +6,10 @@ behavior is what it is.
 
 | Spec | Scope | Implemented by |
 | --- | --- | --- |
-| [`public-api.md`](public-api.md) | Every public type, method, function, error variant | `src/lib.rs` (re-exports), `src/client.rs`, `src/models.rs`, `src/error.rs`, `src/calendar.rs` |
+| [`public-api.md`](public-api.md) | Every public type, method, function, error variant | `src/lib.rs` (re-exports), `src/client.rs`, `src/models.rs`, `src/error.rs`, `src/calendar.rs`, `src/compact.rs` |
 | [`confdata-wire-format.md`](confdata-wire-format.md) | The `confData` object: extraction algorithm, field-by-field tolerance rules | `src/scraper.rs` |
 | [`calendar-resolution.md`](calendar-resolution.md) | Row layouts, imsak mode, day keys, iqama resolution, the display contract | `src/calendar.rs` |
+| [`compact-binary-and-mcu.md`](compact-binary-and-mcu.md) | `MQTC` binary layout, zero-alloc MCU runtime, pre-flash scoping tool | `src/compact.rs`, `examples/pack_for_mcu.rs` |
 | [`offline-snapshots.md`](offline-snapshots.md) | Snapshot envelope, filenames, atomicity, load contract | `src/disk.rs` |
 | [`transport-and-caching.md`](transport-and-caching.md) | Endpoints, headers, timeouts, caps, TTL caches, fallback flow | `src/client.rs`, `src/cache.rs` |
 
@@ -17,8 +18,9 @@ behavior is what it is.
 1. [`transport-and-caching.md`](transport-and-caching.md) — what goes on the wire.
 2. [`confdata-wire-format.md`](confdata-wire-format.md) — what comes back and how it is extracted.
 3. [`calendar-resolution.md`](calendar-resolution.md) — how raw rows become typed times.
-4. [`public-api.md`](public-api.md) — the surface an embedder sees.
-5. [`offline-snapshots.md`](offline-snapshots.md) — what happens when the wire is gone.
+4. [`compact-binary-and-mcu.md`](compact-binary-and-mcu.md) — how prayer data is packed and queried on microcontrollers.
+5. [`public-api.md`](public-api.md) — the surface an embedder sees.
+6. [`offline-snapshots.md`](offline-snapshots.md) — what happens when the wire is gone.
 
 ## Key invariants (cross-spec)
 

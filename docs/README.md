@@ -6,7 +6,7 @@ suite is specified, and how the pieces fit together visually.
 
 | Folder | Contains | Read it when you want to… |
 | --- | --- | --- |
-| [`adr/`](adr/) | Architecture Decision Records (ADR-0001 … ADR-0012) | understand *why* a design choice was made and what it cost |
+| [`adr/`](adr/) | Architecture Decision Records (ADR-0001 … ADR-0013) | understand *why* a design choice was made and what it cost |
 | [`specs/`](specs/) | Functional and format specifications | know *exactly* what the public API, the wire format, the calendar resolution and the snapshot layer do |
 | [`test-specs/`](test-specs/) | One spec per test suite, per pyramid tier | know what every test asserts, how to run it, and what a failure means |
 | [`diagrams/`](diagrams/) | Mermaid diagrams with prose | see the architecture, request flows, parsing pipeline and threat model at a glance |
@@ -15,6 +15,9 @@ suite is specified, and how the pieces fit together visually.
 
 - **I want to use the library** → [`specs/public-api.md`](specs/public-api.md),
   then the crate docs (`cargo doc --open`) and `examples/`.
+- **I want to run on microcontrollers (MCUs) or zero-alloc** →
+  [ADR-0013](adr/0013-no-std-and-mcu-support.md),
+  [`specs/compact-binary-and-mcu.md`](specs/compact-binary-and-mcu.md).
 - **I want to change how data is fetched or parsed** →
   [ADR-0001](adr/0001-keyless-acquisition.md) …
   [ADR-0003](adr/0003-tolerant-wire-parsing.md),
