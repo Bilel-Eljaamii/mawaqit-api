@@ -1,5 +1,12 @@
 # mawaqit-api
 
+[![CI](https://github.com/Bilel-Eljaamii/mawaqit-api/actions/workflows/ci.yml/badge.svg)](https://github.com/Bilel-Eljaamii/mawaqit-api/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/mawaqit-api)](https://crates.io/crates/mawaqit-api)
+[![docs.rs](https://img.shields.io/docsrs/mawaqit-api)](https://docs.rs/mawaqit-api)
+[![license](https://img.shields.io/github/license/Bilel-Eljaamii/mawaqit-api)](LICENSE)
+[![coverage](https://img.shields.io/badge/coverage-100%25%20lines-brightgreen)](docs/test-specs/README.md)
+[![no_std](https://img.shields.io/badge/no__std-alloc%20%7C%20heapless-blue)](docs/adr/0013-no-std-and-mcu-support.md)
+
 Keyless Rust client for [mawaqit.net](https://mawaqit.net) prayer times — no
 account, no API key, nothing personal stored or sent. Built for
 [mawaqit-desktop](https://github.com/Bilel-Eljaamii/mawaqit-desktop) and for
