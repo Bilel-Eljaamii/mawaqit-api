@@ -65,7 +65,9 @@ if let Some(today) = calendar.times_for_date(current_date) {
 | `minutes_between` | `(a: &str, b: &str) -> Option<i64>` | Minutes from `a` to `b` (b−a), midnight wrap handled (`23:30`→`00:10` = 40). `None` if either is not `HH:MM`. |
 
 `mawaqit_api::disk` is public by design (tests, tooling, examples): `store`,
-`load`, `snapshot_path` — see [`offline-snapshots.md`](offline-snapshots.md).
+`load`, `load_as_of` *(0.5.0 — the testable staleness core, F27)*,
+`snapshot_path`, and the `#[doc(hidden)]` test seams `tmp_path` /
+`SNAPSHOT_MAX_AGE_DAYS` — see [`offline-snapshots.md`](offline-snapshots.md).
 
 ## Models (`src/models.rs`)
 
@@ -96,6 +98,11 @@ available.
 | `imsak_mode` | `bool` | Diyanet "Sabah İmsak" layout flag (`displayingSabahImsak`) |
 | `announcements` | `Vec<Announcement>` | entries that fail to parse are dropped |
 | `raw` | `serde_json::Value` | the complete original object — every unmodeled field survives here |
+
+Methods *(0.5.0)*: `timezone() -> Option<&str>` — the page's `timezone`
+designator, IANA-shape-validated; the sanctioned zone source for
+interpreting the mosque-local `iqama_at` wall clocks
+([ADR-0015](../adr/0015-timezone-and-iqama-instants.md), F28).
 
 ### Time rows
 
@@ -150,7 +157,8 @@ See [`compact-binary-and-mcu.md`](compact-binary-and-mcu.md) for full binary lay
 | `NoCalendar` | — | `calendar` missing/empty, or the requested day absent from it |
 | `Api` | `status: u16, url` | any other non-success HTTP status |
 | `InvalidProxy` | message *(0.3.0)* | `with_socks_proxy` got an address that is not `socks5h://host[:port]` — wrong scheme (`socks5`/http(s)/none), empty host, path/query/fragment, or unparseable |
-| `Compact` | `CompactError` *(0.4.2)* | MQTC load/pack failure: invalid magic, unsupported version, buffer too small, CRC-32 checksum mismatch, unresolvable start date, pack-time encode limits (`TimeOutOfRange`, `DeltaOverflow`, `IqamaOffsetOverflow`, `TooManyDays`). Out-of-range date lookups are `None`, not this error |
+| `Compact` | `CompactError` *(0.4.2)* | MQTC load/pack failure: invalid magic, unsupported version, buffer too small, CRC-32 checksum mismatch, unresolvable start date, pack-time encode limits (`TimeOutOfRange`, `DeltaOverflow`, `IqamaOffsetOverflow`, `TooManyDays`), and *(0.5.0)* `InvalidConstName` (emitter name validation, F29). Out-of-range date lookups are `None`, not this error |
+| `SearchWordTooLong` | — *(0.5.0, feature = "std")* | search word over the 128-byte bound (`MAX_SEARCH_WORD_BYTES`, F29b) — refused before any request |
 
 Retry guidance (used by `examples/error_recovery.rs`): `Http` and `Api`
 (5xx/429) are transient → retry with backoff; `MosqueNotFound`,

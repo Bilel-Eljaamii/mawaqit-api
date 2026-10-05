@@ -239,6 +239,35 @@ async fn download_ignores_stale_tmp_artifacts() {
     );
 }
 
+/// The atomic write fails when the destination directory refuses the write:
+/// the error surfaces as Parse and no partial file is left. (The tmp path
+/// is per-writer unique since FINDING F24, so blocking one fixed name is
+/// no longer possible — a read-only directory fails the same write,
+/// deterministically.)
+#[cfg(unix)]
+#[tokio::test]
+async fn download_fails_when_the_tmp_write_is_refused() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = temp_dir("tmp-readonly");
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555))
+        .unwrap();
+
+    let (base, _server) = spawn_mock(mp3_response(b"\xff\xfbshort"));
+    let client = MawaqitClient::with_base_urls(base.clone(), base.clone())
+        .with_cdn_base(base.clone());
+
+    let err = download_voice(&client, "adhan-quds", &dir).await.unwrap_err();
+    assert!(matches!(err, MawaqitError::Parse(_)), "got {err:?}");
+    // Restore so the temp dir can be cleaned up by the OS.
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755))
+        .unwrap();
+    assert!(
+        std::fs::read_dir(&dir).unwrap().count() == 0,
+        "no partial download file lands in the read-only directory"
+    );
+}
+
 /// A directory occupies the final destination path: it is not treated as a
 /// cached voice (is_file), the download runs, and the atomic rename fails
 /// with a surfaced Parse error instead of replacing the directory.
@@ -291,4 +320,79 @@ async fn download_surfaces_a_truncated_body_as_http() {
     let err = download_voice(&client, "adhan-quds", &dir).await.unwrap_err();
     assert!(matches!(err, MawaqitError::Http(_)), "got {err:?}");
     assert!(std::fs::read_dir(&dir).unwrap().count() == 0);
+}
+
+// ------------------------------------------------ round-2 findings (F24)
+
+/// FINDING F24a — a cached file was trusted forever on `len() > 0`: the
+/// destination directory is attacker-writable, so a planted oversized
+/// "voice" would be served forever without validation. Cached-size
+/// validation: a file over the cap is not a cached voice — it is replaced
+/// by a fresh download.
+#[tokio::test]
+async fn finding_f24_oversized_cached_voice_is_replaced() {
+    let dir = temp_dir("f24-cache");
+    std::fs::write(dir.join("adhan-quds.mp3"), vec![0xFFu8; 9 * 1024 * 1024])
+        .unwrap();
+    let body = b"\xff\xfb\x90\x00legit-fresh-download";
+    let (base, _server) = spawn_mock(mp3_response(body));
+    let client = MawaqitClient::with_base_urls(base.clone(), base.clone())
+        .with_cdn_base(base.clone());
+
+    let path =
+        download_voice(&client, "adhan-quds", &dir).await.expect("redownload");
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        body,
+        "an oversized cached file must be replaced, never served"
+    );
+}
+
+/// FINDING F24b — the body was fully buffered (`bytes().await`) before the
+/// 8 MB post-check, and the Content-Length pre-check only fires when the
+/// header exists. The cap must hold mid-stream: a hostile CDN serving an
+/// endless body is cut off at the cap instead of buffered (with the request
+/// timeout as the only backstop).
+#[tokio::test]
+async fn finding_f24_oversized_stream_is_cut_off_midstream() {
+    let dir = temp_dir("f24-stream");
+    // Endless chunked body, no Content-Length, connection never closes.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let _server = thread::spawn(move || {
+        if let Some(Ok(mut stream)) = listener.incoming().next() {
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\nConnection: close\r\n\r\n",
+            );
+            let chunk = vec![0xFFu8; 64 * 1024];
+            loop {
+                if stream.write_all(&chunk).is_err() {
+                    break; // the client aborted at the cap — that's the point
+                }
+            }
+        }
+    });
+    let client = MawaqitClient::with_base_urls(base.clone(), base.clone())
+        .with_cdn_base(base.clone());
+
+    let start = std::time::Instant::now();
+    let result = download_voice(&client, "adhan-egypt", &dir).await;
+    assert!(result.is_err(), "an endless body must be rejected");
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(10),
+        "the mid-stream cap must abort promptly, took {:?}",
+        start.elapsed()
+    );
+}
+
+/// FINDING F24c — the temp file name was fixed (`X.mp3.tmp`): two
+/// concurrent downloads of one voice shared it and one could rename a torn
+/// file into place. Temp names are per-writer unique.
+#[test]
+fn f24_tmp_names_are_unique_per_writer() {
+    let dest = std::env::temp_dir().join("f24-voice.mp3");
+    let a = mawaqit_api::voices::unique_tmp_path(&dest);
+    let b = mawaqit_api::voices::unique_tmp_path(&dest);
+    assert_ne!(a, b, "each writer gets its own temp file");
+    assert!(a.to_string_lossy().ends_with(".tmp"));
 }

@@ -8,49 +8,18 @@ use alloc::{
 use serde_json::Value;
 
 use crate::{
-    error::{MawaqitError, Result},
+    error::{self, BOUNDED_DIAGNOSTIC, BOUNDED_ID, MawaqitError, Result},
     models::{Announcement, ConfData, RawCalendar},
+    sanitize,
 };
 
-/// Strip control characters and the invisible Unicode *Format* (Cf)
-/// category from free-text display fields — FINDING F6 and its review
-/// follow-up: `is_control()` alone misses zero-width characters (U+200B,
-/// U+FEFF), the Arabic marks and the remaining direction/isolate code
-/// points, because they are Format, not Control — yet they spoof display
-/// strings and dodge search/dedupe just the same. Time strings are
-/// deliberately NOT sanitized here: they are pinned strict elsewhere (F4),
-/// and stripping could mint a valid "HH:MM" out of hostile bytes instead
-/// of rejecting the day.
-fn sanitize_text(s: &str) -> String {
-    s.chars().filter(|ch| !is_invisible(*ch)).collect()
-}
-
-/// `is_control()` plus the invisible Format (Cf) characters. std exposes no
-/// general-category API, so the Cf set is an explicit range table (Unicode
-/// 15); the non-BMP marks are the ones relevant to mosque/agenda text.
-fn is_invisible(ch: char) -> bool {
-    ch.is_control()
-        || matches!(ch,
-            '\u{00AD}'                  // soft hyphen
-            | '\u{0600}'..='\u{0605}'   // Arabic number signs
-            | '\u{061C}'                // Arabic letter mark
-            | '\u{06DD}' | '\u{070F}' | '\u{08E2}'
-            | '\u{180E}'                // Mongolian vowel separator
-            | '\u{200B}'..='\u{200F}'   // zero-width + LRM/RLM
-            | '\u{202A}'..='\u{202E}'   // bidi embedding/overrides
-            | '\u{2060}'..='\u{206F}'   // invisible operators + isolates
-            | '\u{FEFF}'                // BOM / zero-width no-break space
-            | '\u{FFF9}'..='\u{FFFB}'   // interlinear annotation anchors
-            | '\u{110BD}' | '\u{110CD}' // Kaithi number signs
-            | '\u{13430}'..='\u{1343F}' // Egyptian format controls
-            | '\u{1D173}'..='\u{1D17A}' // musical symbol control
-            | '\u{E0001}' | '\u{E0020}'..='\u{E007F}' // variation tags
-        )
-}
-
-/// The wire-tolerant Option extractor for display strings, sanitized.
-fn display_string(value: &Value, key: &str) -> Option<String> {
-    value[key].as_str().map(sanitize_text)
+/// The wire-tolerant Option extractor for display strings. Sanitization is
+/// deliberately *not* done here: the assembled [`ConfData`] goes through
+/// the shared sanitizer once at the end of extraction, the same pass the
+/// disk snapshot load applies (FINDING F23 — one character policy at every
+/// ingress).
+fn string_field(value: &Value, key: &str) -> Option<String> {
+    value[key].as_str().map(str::to_string)
 }
 
 /// Extract the `confData` JavaScript object embedded in a mosque page.
@@ -59,11 +28,16 @@ fn display_string(value: &Value, key: &str) -> Option<String> {
 /// configuration — daily times, year calendar, iqama calendar, mosque
 /// metadata — as one JSON literal assigned to a `confData` variable.
 pub fn extract_conf_data(page_html: &str, mosque_id: &str) -> Result<ConfData> {
-    let json_str = find_conf_data_json(page_html)
-        .ok_or_else(|| MawaqitError::ConfDataNotFound(mosque_id.to_string()))?;
+    let json_str = find_conf_data_json(page_html).ok_or_else(|| {
+        MawaqitError::ConfDataNotFound(error::bounded(mosque_id, BOUNDED_ID))
+    })?;
 
-    let value: Value = serde_json::from_str(json_str)
-        .map_err(|e| MawaqitError::Parse(format!("confData: {e}")))?;
+    let value: Value = serde_json::from_str(json_str).map_err(|e| {
+        MawaqitError::Parse(error::bounded(
+            &format!("confData: {e}"),
+            BOUNDED_DIAGNOSTIC,
+        ))
+    })?;
 
     let times: Vec<String> = value["times"]
         .as_array()
@@ -85,52 +59,68 @@ pub fn extract_conf_data(page_html: &str, mosque_id: &str) -> Result<ConfData> {
     }
     let iqama_calendar = parse_calendar(&value, "iqamaCalendar").ok();
 
+    // Announcements are collected element-wise: entries that fail to
+    // deserialize are dropped, not fatal (ADR-0003). Their text is
+    // sanitized by the shared pass below, together with every other
+    // free-text field (F6/F21/F23).
     let announcements: Vec<Announcement> = value["announcements"]
         .as_array()
         .map(|a| {
             a.iter()
                 .filter_map(|v| serde_json::from_value(v.clone()).ok())
-                .map(|mut ann: Announcement| {
-                    ann.title = ann.title.take().map(|t| sanitize_text(&t));
-                    ann.content = ann.content.take().map(|t| sanitize_text(&t));
-                    ann.image = ann.image.take().map(|t| sanitize_text(&t));
-                    ann.video = ann.video.take().map(|t| sanitize_text(&t));
-                    ann
-                })
                 .collect()
         })
         .unwrap_or_default();
 
-    Ok(ConfData {
-        name: display_string(&value, "name"),
-        jumua: display_string(&value, "jumua"),
-        jumua2: display_string(&value, "jumua2"),
-        image: display_string(&value, "image"),
-        shuruq: display_string(&value, "shuruq"),
+    let mut conf = ConfData {
+        name: string_field(&value, "name"),
+        jumua: string_field(&value, "jumua"),
+        jumua2: string_field(&value, "jumua2"),
+        image: string_field(&value, "image"),
+        shuruq: string_field(&value, "shuruq"),
         imsak_mode: times.len() == 6,
         times,
         calendar,
         iqama_calendar,
         announcements,
         raw: value,
-    })
+    };
+    // The page boundary sanitizes exactly what the disk snapshot load
+    // sanitizes — one pass, one character policy (F22/F23).
+    sanitize::confdata(&mut conf);
+    Ok(conf)
 }
 
 /// Find the JSON literal assigned to `confData` in any script of the page,
 /// scanning from the opening `{` to its balanced closing brace (string- and
 /// escape-aware, so `;` or braces inside JSON strings don't break it).
-/// Every `confData` mention is tried until one is an actual assignment.
+///
+/// FINDING F26: a failed candidate has consumed to EOF — its object never
+/// closes. Every later mention lives *inside* that broken object (not an
+/// assignment the page made), and the old loop re-scanning for each of them
+/// was the O(n²) the red-team round exposed. The scan ends at the first
+/// failed candidate: total work stays linear in the page size.
 fn find_conf_data_json(html: &str) -> Option<&str> {
     let mut cursor = 0;
     while let Some(offset) = html[cursor..].find("confData") {
         let start = cursor + offset + "confData".len();
         // The assignment operator and whitespace between the marker and the
-        // literal; anything else means this is some other `confData` mention.
+        // literal; anything else means this is some other `confData` mention
+        // (`confData === undefined` eats one `=` here and still counts as a
+        // mention — pinned by ut/scraper.rs).
         let rest = html[start..].trim_start();
         if let Some(rest) = rest.strip_prefix('=') {
             let rest = rest.trim_start();
-            if let Some(json) = balanced_json(rest) {
-                return Some(json);
+            if rest.starts_with('{') {
+                if let Some(json) = balanced_json(rest) {
+                    return Some(json);
+                }
+                // FINDING F26: a real `{` candidate whose scan ran past the
+                // end of input — the object never closes, every later
+                // mention lives *inside* it (not an assignment the page
+                // made), and the old loop re-scanning for each was the
+                // O(n²) the red-team round exposed. The scan ends.
+                return None;
             }
         }
         cursor = start;
@@ -175,6 +165,10 @@ fn balanced_json(s: &str) -> Option<&str> {
 }
 
 fn parse_calendar(value: &Value, key: &str) -> Result<RawCalendar> {
-    serde_json::from_value::<RawCalendar>(value[key].clone())
-        .map_err(|e| MawaqitError::Parse(format!("{key}: {e}")))
+    serde_json::from_value::<RawCalendar>(value[key].clone()).map_err(|e| {
+        MawaqitError::Parse(error::bounded(
+            &format!("{key}: {e}"),
+            BOUNDED_DIAGNOSTIC,
+        ))
+    })
 }

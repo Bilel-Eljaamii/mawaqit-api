@@ -22,21 +22,30 @@ the wire and how repeated requests are served.
 | `User-Agent` | `Mozilla/5.0 (X11; Linux x86_64; rv:132.0) Gecko/20100101 Firefox/132.0` | `USER_AGENT` — the site rejects non-browser UAs |
 | Total timeout | 30 s (90 s while a SOCKS proxy is set) | `REQUEST_TIMEOUT` / `PROXY_REQUEST_TIMEOUT` |
 | Connect timeout | 10 s (30 s while a SOCKS proxy is set) | `CONNECT_TIMEOUT` / `PROXY_CONNECT_TIMEOUT` |
-| Response size cap | 20 MiB | `MAX_RESPONSE_BYTES` |
+| Response size cap | 1 MiB, enforced while streaming | `MAX_RESPONSE_BYTES` |
+| Search word bound | ≤ 128 bytes; over the bound ⇒ `SearchWordTooLong`, no request | `MAX_SEARCH_WORD_BYTES` (F29b) |
 | Redirect policy | `redirect::Policy::none()` — 302s are never followed; a redirect surfaces as `Api { status }` (finding F1, fixed) | — |
 
 Both timeouts are constructor options (`with_timeouts(connect, request)`);
 without it the defaults apply, raised automatically when a proxy is set
 (see below and [ADR-0012](../adr/0012-tor-socks5-proxy.md)).
 
-All bodies go through `read_capped`: full buffering, then
-`len > 20 MiB ⇒ Parse("response of N bytes exceeds the … cap")`, then
-UTF-8 enforcement (non-UTF-8 ⇒ `Parse`). Known residual: the cap applies
-**after** buffering (finding F3) — see [ADR-0009](../adr/0009-bounded-transport.md).
+All bodies go through `read_capped`: the response is consumed chunk-wise
+with the cap checked per chunk (`len + chunk > 1 MiB ⇒ Parse("response
+exceeds the … cap")`), then UTF-8 enforcement (non-UTF-8 ⇒ `Parse`). The
+voice downloader streams the same way with its own 8 MB cap (F24).
+Known residual: page/search bodies are still accumulated into one string
+inside the cap (finding F3) — see [ADR-0009](../adr/0009-bounded-transport.md).
 
 The search word travels as a reqwest query parameter — percent-encoded, so
 CRLF/header-injection words produce a single-line request target (pinned:
 `ct/hostile_http.rs::search_query_is_percent_encoded_crlf_never_reach_the_wire`).
+The deserialized `Vec<Mosque>` goes through the shared sanitizer before it
+is cached or returned (F22): every modeled string field, the string `id`,
+and every string inside the unmodeled extras — a mosque result is pure
+display metadata, so the pass is total (pinned:
+`finding_f22_search_results_are_sanitized_at_the_ingress`). Error payloads
+echoing the word/slug are sanitized and truncated at construction (F29c).
 
 ## SOCKS5 / Tor routing (opt-in)
 
@@ -60,6 +69,18 @@ Applied with `reqwest::Proxy::all(validated)?` on the builder (build
 failures map through the `Http` variant). The library never enables a
 proxy by default and never starts or bundles a Tor daemon.
 
+**Environment proxies (round-2 audit note):** `reqwest` honors the
+standard `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY` environment variables for
+clients that do not set an explicit proxy — so a hostile or compromised
+shell environment can already re-route this library's traffic before Tor
+is ever configured. This is inherited transport behavior, not a library
+decision: `with_socks_proxy` replaces the env proxies for its client (an
+explicit `Proxy::all` disables the env fallback), and a caller who needs
+strict no-proxy must clear the variables or configure an explicit proxy.
+Documented here so the property is a stated contract, not a surprise
+(seed-hunt: Tor-leak paths — evidence of absence; no in-tree code reads
+the environment).
+
 ## Slug handling on the wire
 
 `fetch_conf_data`:
@@ -74,7 +95,9 @@ proxy by default and never starts or bundles a Tor daemon.
 | Instance | Key | Value | TTL |
 | --- | --- | --- | --- |
 | `pages` | slug (as given) | `Arc<ConfData>` | 6 h |
-| `searches` | `word.to_lowercase()` | `Vec<Mosque>` | 30 min |
+| `searches` | the exact trimmed request word (F30 — keying on
+  `word.to_lowercase()` collided case-confusable words and served one
+  word's cache to another) | `Vec<Mosque>` | 30 min |
 
 Behavior:
 
@@ -88,6 +111,11 @@ Behavior:
   poison the cache.
 - Cache isolation: two slugs never share an entry, and a cache hit issues
   no request (pinned: `ct/hostile_http.rs::cache_never_confuses_two_slugs`).
+  Distinct request words never share an entry even when case-insensitively
+  equal (F30, pinned: `finding_f30_cache_key_is_the_exact_request_string`).
+- Bounded internals: the insertion-order queue compacts once it passes
+  twice the entry cap, so TTL churn cannot grow the cache without bound
+  (F25, pinned: `finding_f25_order_queue_compacts_under_ttl_churn`).
 
 ## Status-code mapping
 

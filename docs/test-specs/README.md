@@ -99,12 +99,35 @@ every `cargo test` as regression anchors; only live tiers stay `#[ignore]`d.
 | F14 | Fajr-relative format loses the iqama rollover | ut | **Fixed by design** (rollover is implicit: adhan + offset ≥ 1440 ⇒ bit 15) | `fajr_relative_roundtrip_preserves_every_field` |
 | F15 | `to_hhmm()` had no bounds contract | docs | **Fixed** (precondition documented; hostile-bits scenario eliminated by F13) | `crafted_crc_valid_records_with_impossible_times_are_dropped` |
 | F16 | `start_day_of_year` = 0/367 under-specified | ut | **Fixed** (`1..=366` guard before chrono; spec states it) | `start_day_of_year_bounds_are_rejected_with_valid_crc` |
+| F21 | Cf sanitizer gaps (U+0890–0891, U+1BCA0–1BCA3, U+13440–13455) + announcement dates unsanitized | ut | **Fixed** (full Cf table; `start_date`/`end_date` sanitized like siblings) | `finding_f21_full_cf_table_and_announcement_dates_are_sanitized` |
+| F22 | Search ingress deserializes `Vec<Mosque>` unsanitized | ct | **Fixed** (shared `sanitize::mosque` pass before caching) | `finding_f22_search_results_are_sanitized_at_the_ingress` |
+| F23 | Disk snapshot ingress: unbounded read, unsanitized load, shared tmp name | ct | **Fixed** (2 MB capped read; shared `sanitize::confdata` on load; per-writer tmp names) | `finding_f23_oversized_snapshot_file_is_refused` / `finding_f23_snapshot_load_is_sanitized` / `f23_tmp_names_are_unique_per_writer` |
+| F24 | Voice download buffers the whole body; cached files trusted forever | voices | **Fixed** (mid-stream cap; cached-size validation; per-writer tmp names) | `finding_f24_oversized_cached_voice_is_replaced` / `finding_f24_oversized_stream_is_cut_off_midstream` |
+| F25 | `TtlCache.order` grows without bound under TTL churn | ut | **Fixed** (compacts past 2× cap) | `finding_f25_order_queue_compacts_under_ttl_churn` |
+| F26 | `find_conf_data_json` re-scans per failed candidate (O(n²) CPU) | ut | **Fixed** (a failed `{` candidate ends the scan; mentions that are not assignments still resume) | `finding_f26_a_failed_candidate_ends_the_scan` / `f26_unbalanced_candidates_stay_linear` |
+| F27 | Stale snapshot served as today on the alarm path | ct | **Fixed** (40-day TTL + same-calendar-year rule inside `disk::load`; offline+stale is an honest error) | `finding_f27_stale_snapshots_are_refused` / `finding_f27_offline_stale_snapshot_is_an_error` |
+| F28 | No timezone contract for `iqama_at` | ut | **Fixed** (ADR-0015; validated `ConfData::timezone()` accessor) | `finding_f28_timezone_accessor_validates_the_wire_designator` |
+| F29 | Pins bundle: `++5` parses as `+5`; uncapped search word; raw hostile strings in error Display; unvalidated emitter `const_name` | ut + ct | **Fixed** (strict single-sign grammar; 128-byte word bound with `SearchWordTooLong`; bounded+sanitized error payloads at construction; `[A-Za-z_][A-Za-z0-9_]*` const names with `InvalidConstName`) | `finding_f29a_double_sign_is_not_an_offset` / `finding_f29b_oversized_search_word_is_refused_before_the_wire` / `finding_f29c_error_payloads_are_bounded_and_sanitized` / `finding_f29d_const_name_is_validated_before_interpolation` |
+| F30 | Cache key (lowercased word) ≠ request identity — cache poisoning across case-confusable words | ct | **Fixed** (key is the exact request string) | `finding_f30_cache_key_is_the_exact_request_string` |
 
 Round-2 QE review (2026-10-05, tracked in
 [GitHub issue #1](https://github.com/Bilel-Eljaamii/mawaqit-api/issues/1)):
 F11–F16, all MQTC codec data-representation findings. F13 was the one
 live defect — `decode_direct` accepted impossible minutes and reserved
 bits from a CRC-valid crafted blob; strict decode now drops the record.
+
+Red-team engagement round 2 — network/ingress slate (2026-10-06, tracked
+in [GitHub issue #2](https://github.com/Bilel-Eljaamii/mawaqit-api/issues/2)):
+F21–F30 (the issue's draft slate F11–F20 renumbered — F11–F16 are taken by
+the MQTC round above and ledger numbers are never reused). The threat
+model spanned the wire, the CDN, the search index, the clock and the
+attacker-writable disk; every free-text ingress (page, search, snapshot)
+now shares one sanitizer, every downloaded/read body is capped mid-stream,
+staleness is decided inside `disk::load`, and the timezone contract for
+`iqama_at` is pinned by [ADR-0015](../adr/0015-timezone-and-iqama-instants.md).
+All ten findings fixed with green pins; the live HIL probes (CDN/proxy,
+timezone wire-key confirmation) are recorded in
+[`hil/live-campaigns.md`](hil/live-campaigns.md).
 
 A future finding starts as an `#[ignore]`d red test and graduates to green;
 the release-gate procedure is in

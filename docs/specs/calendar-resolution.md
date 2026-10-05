@@ -129,3 +129,17 @@ Rules and their rationale:
 | iqama `"+9223372036854775807"` | resolved as +1440 (clamped) — next-day wall clock, valid `HH:MM` |
 | iqama `"7:5"` | adhan fallback |
 | month `0` or `13` | `InvalidMonth(u32)` |
+
+## Timezone contract for `iqama_at` (F28 / ADR-0015)
+
+`iqama_at` instants are **mosque-local wall clock** with the C1 rollover
+already applied. The only sanctioned zone source is
+`ConfData::timezone()` — the page's `timezone` field, shape-validated
+(non-empty, ≤ 64 bytes, `[A-Za-z0-9_./+-]`, no absolute path, no `..`
+segment); a hostile or absent value is `None`, never a guess. Consumers
+convert wall clock + zone to an absolute instant with chrono's
+`LocalResult`: raise rather than guess in the spring-forward gap, take
+the *earlier* offset on the ambiguous autumn hour (a late alarm is less
+harmful than one that lies about having passed). The library never picks
+an offset itself — see
+[ADR-0015](../adr/0015-timezone-and-iqama-instants.md).

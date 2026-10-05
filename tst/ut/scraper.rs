@@ -86,3 +86,21 @@ fn announcement_text_fields_are_all_sanitized() {
     assert_eq!(ann.image.as_deref(), Some("https://x.test/a.jpg"));
     assert_eq!(ann.video.as_deref(), Some("https://x.test/v.mp4"));
 }
+
+/// FINDING F26 (resource pin) — a page full of unbalanced `confData = {`
+/// candidates must parse in linear time: the failed-candidate scan may not
+/// restart for every later marker. 1 MB of hostile markers parses in well
+/// under two seconds post-fix; the quadratic version burned minutes on the
+/// same input (and the transport timeout never covers parsing).
+#[test]
+fn f26_unbalanced_candidates_stay_linear() {
+    let marker = "confData = { unbalanced";
+    let page = format!("<script>var {};</script>", marker.repeat(40_000));
+    let start = std::time::Instant::now();
+    let _ = parse_page(&page, "f26-linear");
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(2),
+        "parse took {:?} on 1 MB of failed candidates — quadratic rescan?",
+        start.elapsed()
+    );
+}

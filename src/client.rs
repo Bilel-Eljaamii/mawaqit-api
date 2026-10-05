@@ -5,8 +5,9 @@ use chrono::{Local, NaiveDate};
 use crate::{
     cache::TtlCache,
     calendar, disk,
-    error::{MawaqitError, Result},
+    error::{self, BOUNDED_DIAGNOSTIC, BOUNDED_ID, MawaqitError, Result},
     models::{ConfData, MonthIqamaTimes, MonthTimes, Mosque, TodayTimes},
+    sanitize,
 };
 
 const API_URL_BASE: &str = "https://mawaqit.net/api";
@@ -34,6 +35,10 @@ const SOCKS_DEFAULT_PORT: u16 = 9050;
 /// A real mosque page is ~60 KB; 1 MB is ~15x headroom (review H2 — the old
 /// 20 MB cap contradicted its own comment). Enforced while streaming.
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
+/// The search word becomes a cache key and a wire URL; the same bound as a
+/// mosque slug (review M1) applies (FINDING F29). Longer words are refused
+/// before any request.
+const MAX_SEARCH_WORD_BYTES: usize = 128;
 
 /// Keyless client for mawaqit.net — no account required.
 ///
@@ -217,7 +222,16 @@ impl MawaqitClient {
         if word.is_empty() {
             return Ok(Vec::new());
         }
-        let cache_key = word.to_lowercase();
+        // FINDING F29: the word would become a giant cache key and a giant
+        // wire URL; the slug bound applies equally.
+        if word.len() > MAX_SEARCH_WORD_BYTES {
+            return Err(MawaqitError::SearchWordTooLong);
+        }
+        // FINDING F30: the key is the exact request string. Lowercasing it
+        // collided case-confusable words ("Paris" vs "paris", Turkish İ
+        // forms), so a second query could be served the first's cached
+        // results even though the wire asked a different question.
+        let cache_key = word.to_string();
         if let Some(cached) = self.inner.searches.get(&cache_key) {
             return Ok(cached);
         }
@@ -228,15 +242,28 @@ impl MawaqitClient {
 
         let status = response.status();
         if status == reqwest::StatusCode::NOT_FOUND {
-            return Err(MawaqitError::MosqueNotFound(word.to_string()));
+            return Err(MawaqitError::MosqueNotFound(error::bounded(
+                word, BOUNDED_ID,
+            )));
         }
         let body = read_capped(response).await?;
         if !status.is_success() {
             return Err(MawaqitError::Api { status: status.as_u16(), url });
         }
 
-        let mosques: Vec<Mosque> = serde_json::from_str(&body)
-            .map_err(|e| MawaqitError::Parse(format!("search: {e}")))?;
+        let mut mosques: Vec<Mosque> =
+            serde_json::from_str(&body).map_err(|e| {
+                MawaqitError::Parse(error::bounded(
+                    &format!("search: {e}"),
+                    BOUNDED_DIAGNOSTIC,
+                ))
+            })?;
+        // FINDING F22: the search response is free text from the same
+        // hostile wire as the page — the shared sanitizer applies at this
+        // ingress exactly like the page parser's.
+        for mosque in &mut mosques {
+            sanitize::mosque(mosque);
+        }
         self.inner.searches.insert(cache_key, mosques.clone());
         Ok(mosques)
     }
@@ -298,7 +325,9 @@ impl MawaqitClient {
 
         let status = response.status();
         if status == reqwest::StatusCode::NOT_FOUND {
-            return Err(MawaqitError::MosqueNotFound(mosque_id.to_string()));
+            return Err(MawaqitError::MosqueNotFound(error::bounded(
+                mosque_id, BOUNDED_ID,
+            )));
         }
         if !status.is_success() {
             return Err(MawaqitError::Api { status: status.as_u16(), url });
@@ -396,7 +425,11 @@ fn resolve_timeouts(
 /// non-empty host, no path/query/fragment, port defaulting to
 /// [`SOCKS_DEFAULT_PORT`].
 fn validate_socks_proxy(addr: &str) -> Result<String> {
-    let reject = |why: String| MawaqitError::InvalidProxy(why);
+    // FINDING F29: the payload echoes caller input — bounded like any
+    // other error payload.
+    let reject = |why: String| {
+        MawaqitError::InvalidProxy(error::bounded(&why, BOUNDED_DIAGNOSTIC))
+    };
     let mut url = reqwest::Url::parse(addr.trim())
         .map_err(|e| reject(format!("{addr:?}: {e}")))?;
     if url.scheme() != "socks5h" {
@@ -443,6 +476,10 @@ async fn read_capped(response: reqwest::Response) -> Result<String> {
         }
         buf.extend_from_slice(&chunk);
     }
-    String::from_utf8(buf)
-        .map_err(|e| MawaqitError::Parse(format!("response is not UTF-8: {e}")))
+    String::from_utf8(buf).map_err(|e| {
+        MawaqitError::Parse(error::bounded(
+            &format!("response is not UTF-8: {e}"),
+            BOUNDED_DIAGNOSTIC,
+        ))
+    })
 }

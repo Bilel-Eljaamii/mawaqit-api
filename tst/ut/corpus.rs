@@ -164,6 +164,8 @@ fn unicode_and_control_characters_never_panic() {
         "\u{0000}null\u{0000}",
         "\u{202E}rtl\u{202D}override",
         "\u{200B}\u{200D}\u{FEFF}zero-width",
+        // F21: the Format-category gaps the Cf table originally missed.
+        "\u{0890}\u{0891}arabic\u{1BCA0}\u{1BCA3}\u{13440}\u{13455}cf-gaps",
         "🕌\u{1F6D1}emoji",
         "line\nbreak\ttab\rreturn",
         "\u{007F}\u{0080}\u{009C}c0-controls",

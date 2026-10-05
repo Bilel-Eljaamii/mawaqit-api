@@ -63,3 +63,30 @@ fn eviction_survives_stale_order_entries() {
     assert_eq!(cache.get("d"), Some(4));
     assert_eq!(cache.get("e"), Some(5));
 }
+
+/// FINDING F25 — expired keys leave their `order` entries behind forever:
+/// the map stays capped, but a long-running client churning TTLs grows the
+/// order queue without bound (every churned key pushes exactly one entry
+/// nothing ever removes). The queue compacts once it passes twice the cap.
+#[test]
+fn finding_f25_order_queue_compacts_under_ttl_churn() {
+    let cache: TtlCache<u32> = TtlCache::new(Duration::ZERO, 4);
+    for i in 0..200 {
+        cache.insert(format!("key-{i}"), i);
+        // A get past the TTL expires the entry: map row removed, order
+        // row stays — the churn pattern of the 6h/30min client caches.
+        let _ = cache.get(&format!("key-{i}"));
+    }
+    assert!(
+        cache.order_len() <= 2 * 4,
+        "order queue must compact under churn, got {} entries for a cap-4 cache",
+        cache.order_len()
+    );
+    // Compaction preserves eviction correctness on a live cache.
+    let live: TtlCache<u32> = TtlCache::new(Duration::from_secs(60), 2);
+    live.insert("a".into(), 1);
+    live.insert("b".into(), 2);
+    live.insert("c".into(), 3);
+    assert_eq!(live.get("a"), None, "oldest evicted");
+    assert_eq!(live.get("c"), Some(3));
+}

@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::{Datelike, Duration, NaiveDate, NaiveTime, Timelike};
 
 use crate::{
-    error::{MawaqitError, Result},
+    error::{self, BOUNDED_DIAGNOSTIC, MawaqitError, Result},
     models::{
         ConfData, DailyIqamaInstants, DailyIqamaTimes, DailyPrayerTimes,
         DayIqamaTimes, DayTimes, MonthIqamaTimes, MonthTimes, RawCalendar,
@@ -57,8 +57,13 @@ pub(crate) fn daily_from_row(
     if let Some((bad, name)) =
         fields.iter().find(|(t, _)| !is_displayable_hhmm(t))
     {
-        return Err(MawaqitError::Parse(format!(
-            "calendar row surfaces invalid {name} time {bad:?} — day rejected"
+        // FINDING F29: {bad} is hostile wire text — the diagnostic is
+        // bounded at construction like every other payload.
+        return Err(MawaqitError::Parse(error::bounded(
+            &format!(
+                "calendar row surfaces invalid {name} time {bad:?} — day rejected"
+            ),
+            BOUNDED_DIAGNOSTIC,
         )));
     }
     Ok(times)
@@ -137,7 +142,10 @@ fn build_daily_times(
 /// day (C1), which a display string alone cannot carry. Anything
 /// unparseable falls back to the adhan time itself, like the official
 /// integrations do; N is clamped to one day so hostile values cannot
-/// overflow the time math.
+/// overflow the time math. FINDING F29: the grammar is one sign then
+/// ASCII digits — `++5` rode the lenient `i64` parse to "+5" before the
+/// strict rule, and a second sign is an unparseable entry (fallback), not
+/// a clamped near-miss.
 pub(crate) fn resolve_iqama_parts(
     raw: &str,
     adhan: &str,
@@ -145,6 +153,7 @@ pub(crate) fn resolve_iqama_parts(
     let adhan_t = parse_hhmm(adhan);
     let adhan_min = adhan_t.map(|t| t.hour() as i64 * 60 + t.minute() as i64);
     if let Some(mins) = raw.trim().strip_prefix('+')
+        && !mins.trim().starts_with(['+', '-'])
         && let (Ok(n), Some(t)) = (mins.trim().parse::<i64>(), adhan_t)
         && let Some(delta) = Duration::try_minutes(n.clamp(0, 24 * 60))
     {

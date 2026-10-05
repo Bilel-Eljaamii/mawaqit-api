@@ -8,22 +8,71 @@ versioning: [semver](https://semver.org/).
 
 ### Fixed
 
-- Round-2 QE review findings F11–F16 on the MQTC codec (GitHub issue #1;
-  ledger in `docs/test-specs/README.md`). The one live defect — F13:
-  `decode_direct` accepted impossible minutes (1440..=2047) and reserved
-  bitfield bits 12–13 from a CRC-valid crafted blob, reaching display as
-  e.g. "34:07" — is fixed by strict decode: corrupt records drop the day
-  as `None`, never clamped or fabricated. F11 (White-Night negative
-  delta) and F14 (delta rollover) were already correct by the
-  fajr-relative design and are now pinned by tests; F12/F15/F16 tighten
-  the spec (explicit CRC zero-range, `to_hhmm` precondition,
-  `start_day_of_year` 1..=366).
+- **Red-team round 2, network/ingress slate — F21–F30** (GitHub issue #2;
+  ledger in `docs/test-specs/README.md`; the issue's draft F11–F20
+  renumbered because F11–F16 are taken by the MQTC round). All ten
+  findings fixed class-wide, each pinned by a green regression test:
+  - **F21** — the Cf sanitizer table now covers U+0890–0891,
+    U+1BCA0–1BCA3 and U+13440–13455, and announcement
+    `start_date`/`end_date` are sanitized like their siblings.
+  - **F22** — the search ingress (`Vec<Mosque>`) runs through the new
+    shared `sanitize` module (modeled fields, the string `id`, and every
+    string inside unmodeled extras); hostile labels no longer reach the
+    tray/UI verbatim.
+  - **F23** — the disk snapshot load caps the read at 2 MB (a planted
+    10 GB file costs one bounded read, not an RSS blowup), applies the
+    shared sanitizer exactly like the page path, and writes through
+    per-writer unique temp names (pid + sequence) so racing writers can
+    never rename a torn file into place.
+  - **F24** — voice downloads stream with the 8 MB cap enforced per
+    chunk (a hostile CDN without `Content-Length` is cut off mid-stream
+    instead of buffered to the request timeout), a cached file over the
+    cap is replaced instead of trusted forever, and temp names are
+    per-writer unique.
+  - **F25** — `TtlCache`'s insertion-order queue compacts once it passes
+    twice the entry cap: TTL churn can no longer grow it without bound.
+  - **F26** — `find_conf_data_json` ends the scan at the first failed
+    `{` candidate (its scan already consumed to EOF and every later
+    mention lives inside the broken object), making extraction linear in
+    the page size; mentions that are not assignments still resume the
+    search.
+  - **F27** — staleness is decided inside `disk::load` (40-day TTL plus
+    the same-calendar-year rule — a December snapshot never answers a
+    January date); offline + stale is an honest network error, never
+    year-old times on the alarm path. `disk::load_as_of` exposes the
+    testable core.
+  - **F28** — new ADR-0015 fixes the timezone contract: `iqama_at` is
+    mosque-local wall clock, the sanctioned zone source is the validated
+    `ConfData::timezone()` accessor, DST edge handling is the caller's
+    (raise, then earlier-offset) — the library never picks an offset.
+  - **F29** — pins bundle: `++5`/`+-5` are no longer parsed as `+5`
+    (strict single-sign grammar, adhan fallback); search words over 128
+    bytes are refused with the new `SearchWordTooLong` before any
+    request; every payload-bearing error variant sanitizes and truncates
+    at construction (128-byte identifiers, 256-byte diagnostics), so
+    `Display` can never echo megabytes of hostile control characters;
+    the MQTC source emitters validate `const_name` against
+    `[A-Za-z_][A-Za-z0-9_]*` (≤ 64 bytes) and reject with the new
+    `CompactError::InvalidConstName` instead of injecting code into the
+    firmware build.
+  - **F30** — the search cache keys on the exact request string:
+    lowercased keys collided case-confusable words ("Paris" vs "paris",
+    Turkish İ forms) and served one word's cached results to another.
 - `just coverage` failed on a fresh checkout (`tee` into a directory
   that the recipe only created later); the `mkdir -p` now precedes the
   report render.
 
 ### Added
 
+- The shared free-text sanitizer (`src/sanitize.rs`, private): one
+  character policy at every ingress — page parse, search results, disk
+  snapshot load (ADR-0003 amendment).
+- ADR-0015 (`iqama_at` is mosque-local wall clock; validated
+  `ConfData::timezone()`); amendments to ADR-0003 (shared sanitizer, raw
+  contract), ADR-0005 (read cap, unique tmp names, in-loader staleness)
+  and ADR-0012 (environment-proxy audit note); spec sync across
+  transport-and-caching, offline-snapshots, confdata-wire-format,
+  calendar-resolution, public-api and the MQTC spec.
 - `just coverage` — a hard coverage gate: one instrumented test run
   (`cargo-llvm-cov`), HTML + lcov reports rendered over `src/` only (test
   files excluded), and a **100%-line-coverage requirement** — the recipe

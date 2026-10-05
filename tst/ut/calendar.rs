@@ -210,8 +210,10 @@ fn hostile_iqama_offsets_do_not_panic() {
         at.maghrib,
         day.succ_opt().unwrap().and_hms_opt(17, 45, 0).unwrap()
     );
-    // one '+' is stripped and "+5" parses: 19:15 + 5 = 19:20
-    assert_eq!(iq.isha, "19:20");
+    // FINDING F29a: `++5` is not a "+5" — the strict grammar is one sign
+    // then digits, so a double sign is an unparseable entry and falls back
+    // to the adhan time itself (19:15), never a clamped near-miss.
+    assert_eq!(iq.isha, "19:15");
 }
 
 // ------------------------------------------------------ month extraction

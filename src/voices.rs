@@ -9,14 +9,17 @@
 #[cfg(any(feature = "std", feature = "alloc"))]
 use alloc::{format, string::String};
 #[cfg(feature = "std")]
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 #[cfg(any(feature = "std", feature = "alloc"))]
 use crate::models::ConfData;
 #[cfg(feature = "std")]
 use crate::{
     MawaqitClient,
-    error::{MawaqitError, Result},
+    error::{self, BOUNDED_DIAGNOSTIC, BOUNDED_ID, MawaqitError, Result},
 };
 
 /// The public CDN root the mosque-screen voices are served from.
@@ -25,6 +28,20 @@ pub const CDN_URL_BASE: &str = "https://cdn.mawaqit.net/audio";
 /// Hard cap for one downloaded voice file (real files are ~2–5 MB).
 #[cfg(feature = "std")]
 const MAX_VOICE_BYTES: usize = 8 * 1024 * 1024;
+
+/// The temp file for an atomic write of `dest` — per-writer unique (pid +
+/// sequence, FINDING F24): two concurrent downloads of one voice must
+/// never share a temp path. `#[doc(hidden)]` test instrumentation, not
+/// semver surface.
+#[cfg(feature = "std")]
+#[doc(hidden)]
+pub fn unique_tmp_path(dest: &Path) -> PathBuf {
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, Ordering::Relaxed);
+    let mut s = dest.as_os_str().to_os_string();
+    s.push(format!(".{}-{n}.tmp", std::process::id()));
+    PathBuf::from(s)
+}
 
 /// One selectable adhan recording.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -90,8 +107,9 @@ pub fn voice_id_from_conf(conf: &ConfData) -> Option<&'static str> {
 }
 
 /// Download a catalog voice into `dest_dir` (as `{id}.mp3`, atomically) and
-/// return the path. Skips the download when a non-empty file is already
-/// cached. The download goes through the client's HTTP stack, so a proxy
+/// return the path. Skips the download when a valid file is already cached
+/// (validated size, FINDING F24 — a cached file is never trusted past the
+/// cap). The download goes through the client's HTTP stack, so a proxy
 /// (Tor) applies. Playback fallback is the caller's concern: on `Err`, play
 /// the builtin instead.
 #[cfg(feature = "std")]
@@ -101,15 +119,18 @@ pub async fn download_voice(
     dest_dir: &Path,
 ) -> Result<PathBuf> {
     let Some(url) = client.voice_url(id) else {
-        return Err(MawaqitError::InvalidVoice(id.to_string()));
+        return Err(MawaqitError::InvalidVoice(error::bounded(id, BOUNDED_ID)));
     };
     let dest = dest_dir.join(format!("{id}.mp3"));
 
     // A directory (or any non-file) at the destination is not a cached
-    // voice — the download proceeds and the later steps fail loudly.
-    if std::fs::metadata(&dest)
-        .is_ok_and(|meta| meta.is_file() && meta.len() > 0)
-    {
+    // voice — the download proceeds and the later steps fail loudly. The
+    // same for an oversized "cached" file (FINDING F24): the destination
+    // directory is attacker-writable, so a planted blob is replaced by a
+    // fresh download instead of being served forever.
+    if std::fs::metadata(&dest).is_ok_and(|meta| {
+        meta.is_file() && meta.len() > 0 && meta.len() <= MAX_VOICE_BYTES as u64
+    }) {
         return Ok(dest);
     }
 
@@ -125,38 +146,49 @@ pub async fn download_voice(
         return Err(MawaqitError::Api { status: status.as_u16(), url });
     }
     // The CDN sends Content-Length; a larger claim is rejected before any
-    // buffering. A missing header falls through to the post-download check.
+    // transfer. A missing header falls through to the mid-stream cap.
     if response
         .content_length()
         .is_some_and(|len| len as usize > MAX_VOICE_BYTES)
     {
-        return Err(MawaqitError::InvalidVoice(format!(
-            "voice file exceeds the {MAX_VOICE_BYTES} byte cap"
+        return Err(MawaqitError::InvalidVoice(error::bounded(
+            &format!("voice file exceeds the {MAX_VOICE_BYTES} byte cap"),
+            BOUNDED_DIAGNOSTIC,
         )));
     }
-    let bytes = match response.bytes().await {
-        Ok(bytes) => bytes,
-        Err(e) => return Err(MawaqitError::Http(e)),
-    };
-    if bytes.len() > MAX_VOICE_BYTES {
-        return Err(MawaqitError::InvalidVoice(format!(
-            "voice file of {} bytes exceeds the {MAX_VOICE_BYTES} byte cap",
-            bytes.len()
-        )));
+    // FINDING F24: the body is streamed with the cap enforced per chunk —
+    // it is never buffered past the cap, and a hostile CDN serving an
+    // endless body without Content-Length is cut off mid-stream instead of
+    // being held to the request timeout.
+    let mut response = response;
+    let mut bytes: Vec<u8> = Vec::new();
+    loop {
+        match response.chunk().await {
+            Ok(Some(chunk)) => {
+                if bytes.len() + chunk.len() > MAX_VOICE_BYTES {
+                    return Err(MawaqitError::InvalidVoice(error::bounded(
+                        &format!(
+                            "voice file exceeds the {MAX_VOICE_BYTES} byte cap"
+                        ),
+                        BOUNDED_DIAGNOSTIC,
+                    )));
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            Ok(None) => break,
+            Err(e) => return Err(MawaqitError::Http(e)),
+        }
     }
     if bytes.is_empty() {
-        return Err(MawaqitError::InvalidVoice("empty voice file".into()));
+        return Err(MawaqitError::InvalidVoice("empty voice file".to_string()));
     }
 
     std::fs::create_dir_all(dest_dir)
         .map_err(|e| MawaqitError::Parse(e.to_string()))?;
-    let tmp = dest.with_extension(format!(
-        "mp3.tmp-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.subsec_nanos())
-            .unwrap_or(0)
-    ));
+    // FINDING F24: the temp name is per-writer unique — two concurrent
+    // downloads of one voice must never share a temp path, or one renames
+    // a torn file into place.
+    let tmp = unique_tmp_path(&dest);
     std::fs::write(&tmp, &bytes)
         .map_err(|e| MawaqitError::Parse(e.to_string()))?;
     std::fs::rename(&tmp, &dest)

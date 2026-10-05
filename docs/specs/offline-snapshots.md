@@ -67,7 +67,8 @@ Pinned by `src/disk.rs::messy_wire_shapes_in_raw_never_break_loading`,
 2. Serialize **fully in memory**; serialization failure ⇒ `None` (nothing
    written).
 3. `create_dir_all(parent)` ⇒ best-effort.
-4. Write `…json.tmp`, then `std::fs::rename` onto `…json`.
+4. Write the temp file (`disk::tmp_path` — per-writer unique, pid +
+   sequence, F23), then `std::fs::rename` onto `…json`.
 5. Any I/O failure ⇒ `None`; the previous snapshot is untouched.
 
 **Best-effort contract at the client level** (`conf_data_dated`): a failed
@@ -77,21 +78,30 @@ file (no `.tmp` residue — pinned by
 
 ## `load(dir, slug) -> Option<(NaiveDate, ConfData)>`
 
+`load` delegates to `load_as_of(dir, slug, today)` with today's date.
 Total-function contract; every row yields `None`:
 
 | File state | Result |
 | --- | --- |
 | Missing / unreadable | `None` |
+| Larger than the 2 MB read cap (F23) — the read is capped before parsing | `None` |
+| Not UTF-8 (F23) | `None` |
 | Empty, not JSON, wrong top-level type | `None` |
 | Truncated envelope (missing keys) | `None` |
 | `fetched_at` not a `NaiveDate` | `None` |
 | `version != 1` | `None` |
 | `mosque_slug != slug` | `None` |
+| `today - fetched_at > 40 days` (F27: `SNAPSHOT_MAX_AGE_DAYS`) | `None` |
+| `today` in a different calendar year than `fetched_at` (F27; ADR-0002 — one page is one year) | `None` |
 | `conf` fails tolerant `ConfData` deserialization | `None` |
 
 Success ⇒ `(fetched_at, conf)` where `conf` is guaranteed digestible by
 the calendar pipeline (fuzz-pinned: every mutation that loads is pushed
-through `dig()`).
+through `dig()`) and **sanitized by the shared pass** (F23: the offline
+path strips exactly what the online page path strips — pinned:
+`finding_f23_snapshot_load_is_sanitized`). Refusal is honest: offline +
+stale means "no snapshot", and the client surfaces the real network error
+(pinned: `finding_f27_offline_stale_snapshot_is_an_error`).
 
 ## Client integration (decision flow)
 
@@ -102,7 +112,7 @@ flowchart TD
     M -- no --> N[network fetch]
     N -- ok --> S[disk::store best-effort]
     S --> O[(conf, None)]
-    N -- err --> D{snapshot exists?}
+    N -- err --> D{snapshot exists and is fresh (load, F27)?}
     D -- yes --> F[(conf, Some fetched_at)]
     D -- no --> E[Err original error]
 ```
@@ -117,6 +127,8 @@ always (tests: `hostile_slugs_stay_inside_the_directory`,
 
 ## Public API
 
-`mawaqit_api::disk::{store, load, snapshot_path}` is public so tooling and
-examples (`offline_mirror.rs`, `conf_diff.rs`) can warm and inspect
-snapshots without a client instance.
+`mawaqit_api::disk::{store, load, load_as_of, snapshot_path, tmp_path}`
+is public so tooling and examples (`offline_mirror.rs`, `conf_diff.rs`)
+can warm and inspect snapshots without a client instance
+(`tmp_path`/`SNAPSHOT_MAX_AGE_DAYS` are `#[doc(hidden)]`-style test
+seams and constants, not stable surface).

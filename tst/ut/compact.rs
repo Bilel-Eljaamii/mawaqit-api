@@ -667,3 +667,38 @@ fn too_many_days_is_rejected_at_pack_time() {
     assert_eq!(b.len(), 65_537);
     assert_eq!(b.to_bytes(), Err(CompactError::TooManyDays(65_537)));
 }
+
+/// FINDING F29d — the source emitters interpolate `const_name` verbatim
+/// into generated Rust/C source; an unvalidated name is code injection
+/// into the firmware build (`X"; static EVIL: ...`). Names outside the
+/// identifier grammar shared by both languages are rejected before any
+/// interpolation.
+#[test]
+fn finding_f29d_const_name_is_validated_before_interpolation() {
+    let payload = builder(date(2026, 10, 5), 2, false);
+    let hostile = [
+        "X\"; static EVIL: [u8; 0] = [",
+        "A\nB",
+        "",
+        "1abc",
+        "a-b",
+        "a b",
+        // 65 bytes of legal identifier characters is still over the bound.
+    ];
+    let long_name = "A".repeat(65);
+    for name in hostile.into_iter().chain([long_name.as_str()]) {
+        assert_eq!(
+            payload.to_rust_code(name).unwrap_err(),
+            CompactError::InvalidConstName,
+            "to_rust_code accepted {name:?}"
+        );
+        assert_eq!(
+            payload.to_c_header(name).unwrap_err(),
+            CompactError::InvalidConstName,
+            "to_c_header accepted {name:?}"
+        );
+    }
+    let ok = "PRAYER_CALENDAR_V1";
+    assert!(payload.to_rust_code(ok).is_ok());
+    assert!(payload.to_c_header(ok).is_ok());
+}

@@ -10,6 +10,7 @@ use std::{
 };
 
 use mawaqit_api::{ConfData, MawaqitClient, disk};
+use serde_json::json;
 
 use crate::common::temp_dir;
 
@@ -160,4 +161,149 @@ fn default_conf_roundtrips_through_the_snapshot() {
     assert_eq!(fetched_at, stored);
     assert!(conf.times.is_empty());
     assert!(conf.calendar.is_empty());
+}
+
+// ------------------------------------------------ round-2 findings (F23/F27)
+
+/// A valid minimal conf object for hand-written envelopes.
+fn valid_conf_json() -> serde_json::Value {
+    json!({
+        "times": ["05:27", "06:37", "13:21", "16:37", "19:24"],
+        "calendar": [{"1": ["05:27", "06:37", "07:07", "13:21", "16:37", "19:24"]}],
+        "name": "Hand Written Mosque",
+    })
+}
+
+/// Hand-write an envelope with an explicit `fetched_at` (the store API
+/// always stamps today, which is exactly what the staleness pins must not
+/// assume).
+fn write_envelope(
+    dir: &std::path::Path,
+    fetched_at: chrono::NaiveDate,
+    conf: serde_json::Value,
+) {
+    let envelope = json!({
+        "version": 1,
+        "mosque_slug": SLUG,
+        "fetched_at": fetched_at.to_string(),
+        "conf": conf,
+    });
+    std::fs::write(disk::snapshot_path(dir, SLUG), envelope.to_string())
+        .unwrap();
+}
+
+/// FINDING F23a — `load` read the whole file into memory before parsing:
+/// the snapshot directory is attacker-writable at the app's privilege, so
+/// a 10 GB "snapshot" blows RSS before the first parse. The read is capped
+/// at 2 MB (a real page is ~60 KB); an oversized file is "no snapshot".
+#[test]
+fn finding_f23_oversized_snapshot_file_is_refused() {
+    let dir = temp_dir("ct", "f23-cap");
+    let mut conf = valid_conf_json();
+    conf["junk"] = json!("x".repeat(3 * 1024 * 1024));
+    write_envelope(&dir, chrono::Local::now().date_naive(), conf);
+    assert!(
+        disk::load(&dir, SLUG).is_none(),
+        "a file past the read cap is not a snapshot"
+    );
+}
+
+/// FINDING F23b — the snapshot load deserialized hostile JSON without the
+/// shared sanitizer; the offline path now strips exactly what the online
+/// page path strips (F6/F21 field set), so a snapshot can never carry what
+/// the live path would have rejected.
+#[test]
+fn finding_f23_snapshot_load_is_sanitized() {
+    let dir = temp_dir("ct", "f23-sanitize");
+    let mut conf = valid_conf_json();
+    conf["name"] = json!("\u{202E}EVIL\u{200B}");
+    conf["announcements"] =
+        json!([{ "title": "\u{200B}t", "start_date": "\u{202E}d" }]);
+    write_envelope(&dir, chrono::Local::now().date_naive(), conf);
+
+    let (_, loaded) = disk::load(&dir, SLUG).expect("a valid envelope loads");
+    assert_eq!(loaded.name.as_deref(), Some("EVIL"));
+    let ann = &loaded.announcements[0];
+    assert_eq!(ann.title.as_deref(), Some("t"));
+    assert_eq!(ann.start_date.as_deref(), Some("d"));
+}
+
+/// FINDING F23c — the temp file name was fixed (`X.json.tmp`): two writers
+/// racing on one slug shared the temp path and one could rename a torn
+/// file into place. Temp names are per-writer unique (pid + sequence).
+#[test]
+fn f23_tmp_names_are_unique_per_writer() {
+    let path = disk::snapshot_path(&temp_dir("ct", "f23-tmp"), SLUG);
+    let a = disk::tmp_path(&path);
+    let b = disk::tmp_path(&path);
+    assert_ne!(a, b, "each writer gets its own temp file");
+    assert_eq!(a.extension().and_then(|e| e.to_str()), Some("tmp"));
+}
+
+/// FINDING F23 (anchor) — a non-UTF8 snapshot file degrades to None, the
+/// same contract as any other parse failure.
+#[test]
+fn f23_non_utf8_snapshot_degrades_to_none() {
+    let dir = temp_dir("ct", "f23-utf8");
+    std::fs::write(disk::snapshot_path(&dir, SLUG), [0xFF, 0xFE, 0x00])
+        .unwrap();
+    assert!(disk::load(&dir, SLUG).is_none());
+}
+
+/// FINDING F27 — a snapshot had no TTL: a year-old file served "today's"
+/// times on the alarm path. Decided contract: ~40-day TTL plus the
+/// same-calendar-year rule inside `disk::load` (one page = one year,
+/// ADR-0002) — a December snapshot never answers a January date.
+#[test]
+fn finding_f27_stale_snapshots_are_refused() {
+    let dir = temp_dir("ct", "f27");
+    let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 6).unwrap();
+
+    write_envelope(&dir, today - chrono::Duration::days(40), valid_conf_json());
+    assert!(
+        disk::load_as_of(&dir, SLUG, today).is_some(),
+        "40 days is within the TTL"
+    );
+
+    write_envelope(&dir, today - chrono::Duration::days(41), valid_conf_json());
+    assert!(
+        disk::load_as_of(&dir, SLUG, today).is_none(),
+        "41 days is stale — no snapshot"
+    );
+
+    // The Dec 31 -> Jan 1 boundary: one day old, wrong calendar year.
+    write_envelope(
+        &dir,
+        chrono::NaiveDate::from_ymd_opt(2026, 12, 31).unwrap(),
+        valid_conf_json(),
+    );
+    assert!(
+        disk::load_as_of(
+            &dir,
+            SLUG,
+            chrono::NaiveDate::from_ymd_opt(2027, 1, 1).unwrap()
+        )
+        .is_none(),
+        "a December snapshot never serves January"
+    );
+}
+
+/// FINDING F27 (client contract) — offline with only a stale snapshot is
+/// an honest error (the real network failure), never year-old times on the
+/// alarm path.
+#[tokio::test]
+async fn finding_f27_offline_stale_snapshot_is_an_error() {
+    let dir = temp_dir("ct", "f27-offline");
+    let stale = chrono::Local::now().date_naive() - chrono::Duration::days(60);
+    write_envelope(&dir, stale, valid_conf_json());
+
+    let offline = MawaqitClient::with_base_urls(
+        DEAD_BASE.to_string(),
+        DEAD_BASE.to_string(),
+    )
+    .with_disk_cache(dir);
+    assert!(
+        offline.conf_data_dated(SLUG).await.is_err(),
+        "a stale snapshot must not serve as today's data"
+    );
 }

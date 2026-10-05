@@ -254,6 +254,7 @@ Mawaqit only publishes data for the current calendar year (ending Dec 31).
 | `DeltaOverflow { prayer, delta }` | Fajr-relative pack: an adhan offset from fajr is negative or exceeds 1439 (non-ascending input) |
 | `IqamaOffsetOverflow { prayer, delta }` | Fajr-relative pack: an iqama offset is negative or exceeds 254 (one byte, `0xFF` reserved) |
 | `TooManyDays(usize)` | Packer input: more than `u16::MAX` day records |
+| `InvalidConstName` | Source emitters (`to_rust_code`/`to_c_header`): `const_name` outside `[A-Za-z_][A-Za-z0-9_]*` (≤ 64 bytes) — the name is interpolated verbatim into generated source, so anything else is rejected before interpolation (F29) |
 
 A queried date outside `[start_date, end_date]` is **`None`**, not an
 error — lookups are total, and `DateOutOfBounds` intentionally does not

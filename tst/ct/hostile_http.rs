@@ -22,6 +22,7 @@ use std::{
 };
 
 use mawaqit_api::{MawaqitClient, MawaqitError};
+use serde_json::json;
 
 // ---------------------------------------------------------------- mock server
 
@@ -545,5 +546,112 @@ async fn invalidate_drops_one_slug_and_keeps_the_others() {
         mock.requests().len(),
         3,
         "mosque-a refetched after invalidation, mosque-b still cached"
+    );
+}
+
+// ------------------------------------------------ round-2 findings
+// (F22/F29/F30)
+
+/// FINDING F22 — the search response is free text from the same hostile
+/// wire as the mosque page, but `Vec<Mosque>` was deserialized verbatim:
+/// hostile labels reached the tray/UI through `display_name()`. The shared
+/// sanitizer now applies at this ingress — modeled fields, the string `id`,
+/// and every string inside the flattened `extra` map.
+#[tokio::test]
+async fn finding_f22_search_results_are_sanitized_at_the_ingress() {
+    let body = serde_json::to_string(&json!([{
+        "slug": "clean-slug",
+        "name": "\u{202E}EVIL\u{200B}",
+        "label": "A\u{200B}B",
+        "locality": "\u{202D}C",
+        "country": "D\u{FEFF}E",
+        "id": "i\u{2060}d",
+        "extra_note": "\u{200B}x",
+        // Nested structures in the unmodeled extras go through the same
+        // recursion: arrays, objects, and strings inside them.
+        "tags": ["\u{200B}t1", {"deep": "\u{202E}d", "n": 7}],
+    }]))
+    .unwrap();
+    let server = spawn_mock(vec![("/2.0/mosque/search", ok_json(&body))]);
+    let client = server.client();
+
+    let mosques = client.search_mosques("paris").await.expect("search");
+    assert_eq!(mosques.len(), 1);
+    let m = &mosques[0];
+    assert_eq!(m.name.as_deref(), Some("EVIL"));
+    assert_eq!(m.label.as_deref(), Some("AB"));
+    assert_eq!(m.locality.as_deref(), Some("C"));
+    assert_eq!(m.country.as_deref(), Some("DE"));
+    assert_eq!(m.id.as_ref().and_then(|v| v.as_str()), Some("id"));
+    assert_eq!(
+        m.slug.as_deref(),
+        Some("clean-slug"),
+        "clean data is untouched"
+    );
+    assert_eq!(
+        m.extra.get("extra_note").and_then(|v| v.as_str()),
+        Some("x"),
+        "unmodeled extra strings are sanitized too"
+    );
+    let tags = m.extra.get("tags").expect("tags survive in extra");
+    assert_eq!(tags[0].as_str(), Some("t1"), "array items are sanitized");
+    assert_eq!(
+        tags[1].get("deep").and_then(|v| v.as_str()),
+        Some("d"),
+        "nested object strings are sanitized"
+    );
+    assert_eq!(
+        tags[1].get("n").and_then(|v| v.as_i64()),
+        Some(7),
+        "numbers pass through"
+    );
+    // And what the caller actually displays is clean end to end.
+    assert!(!m.display_name().chars().any(char::is_control));
+}
+
+/// FINDING F29b — an unbounded search word became a giant cache key and a
+/// giant wire URL. Words over 128 bytes (the slug bound) are refused at
+/// the client, before any request leaves the process.
+#[tokio::test]
+async fn finding_f29b_oversized_search_word_is_refused_before_the_wire() {
+    let server = spawn_mock(vec![("/2.0/mosque/search", ok_json("[]"))]);
+    let client = server.client();
+
+    let err = client.search_mosques(&"a".repeat(129)).await.unwrap_err();
+    assert!(matches!(err, MawaqitError::SearchWordTooLong), "got {err:?}");
+    assert!(
+        server.requests().is_empty(),
+        "an oversized word must never reach the wire"
+    );
+
+    // Exactly at the bound is legal.
+    let ok = client
+        .search_mosques(&"a".repeat(128))
+        .await
+        .expect("128 bytes is legal");
+    assert!(ok.is_empty());
+}
+
+/// FINDING F30 — the cache key was the lowercased word while the wire
+/// query carried the original: case-confusable words ("Paris" vs "paris",
+/// Turkish İ forms) collided on one key, so a second query could be served
+/// the first's cached results even though the server was asked a different
+/// question. The key is the exact request string.
+#[ignore = "RED TEAM FINDING F30: cache key = lowercased word, not the request identity — key on the exact request string"]
+#[tokio::test]
+async fn finding_f30_cache_key_is_the_exact_request_string() {
+    let server =
+        spawn_mock(vec![("/2.0/mosque/search", ok_json(&search_ok()))]);
+    let client = server.client();
+
+    client.search_mosques("Paris").await.expect("first query");
+    client.search_mosques("Paris").await.expect("identical repeat");
+    assert_eq!(server.requests().len(), 1, "an identical repeat stays cached");
+
+    client.search_mosques("paris").await.expect("case variant");
+    assert_eq!(
+        server.requests().len(),
+        2,
+        "a distinct request string must not be served another word's cache"
     );
 }

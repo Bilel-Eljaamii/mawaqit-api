@@ -52,6 +52,10 @@ pub mod disk;
 mod error;
 #[cfg(any(feature = "std", feature = "alloc"))]
 mod models;
+/// The shared free-text sanitizer (ADR-0003) — one character policy at
+/// every ingress: page parse, search results, disk snapshot load.
+#[cfg(any(feature = "std", feature = "alloc"))]
+mod sanitize;
 #[cfg(any(feature = "std", feature = "alloc"))]
 mod scraper;
 /// Domain-core slug policy (ADR-0014) — pure, compiles in `core`.

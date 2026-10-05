@@ -101,6 +101,38 @@ pub struct ConfData {
     pub raw: serde_json::Value,
 }
 
+impl ConfData {
+    /// The mosque's IANA timezone designator as published by the page
+    /// (`timezone` in confData), shape-validated — FINDING F28 / ADR-0015.
+    /// `iqama_at` instants are mosque-local wall clock; this accessor is
+    /// the only sanctioned zone source for interpreting them. `None` when
+    /// the field is absent, not a string, or malformed (empty, over 64
+    /// bytes, absolute path, `..` segment, or characters outside the IANA
+    /// identifier alphabet) — a hostile value is indistinguishable from
+    /// "the mosque publishes no zone".
+    pub fn timezone(&self) -> Option<&str> {
+        let tz = self.raw.get("timezone")?.as_str()?;
+        is_plausible_timezone(tz).then_some(tz)
+    }
+}
+
+/// IANA-identifier shape check for [`ConfData::timezone`]: letters,
+/// digits and `_`, `.`, `/`, `-`, `+`, up to 64 bytes, never empty, never
+/// an absolute path, never a `..` segment. Deliberately not a tz-database
+/// lookup — validation here only bounds what reaches a caller's zone
+/// resolver (F29's bounded-echo rule would otherwise apply to a 4 MB
+/// "timezone").
+fn is_plausible_timezone(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 64
+        && !s.starts_with('/')
+        && s.chars().all(|c| {
+            c.is_ascii_alphanumeric()
+                || matches!(c, '_' | '.' | '/' | '-' | '+')
+        })
+        && !s.split('/').any(|seg| seg == "..")
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Announcement {
     #[serde(default, skip_serializing_if = "Option::is_none")]

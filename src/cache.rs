@@ -68,6 +68,15 @@ impl<V: Clone> TtlCache<V> {
         {
             entries.map.remove(&k);
         }
+        // FINDING F25: expired/invalidated keys leave their order entries
+        // behind forever, so a long-running client churning TTLs grows the
+        // queue without bound even though the map stays capped. Compact
+        // once the queue passes twice the cap — bounded work, amortized
+        // over the churn that caused it.
+        if entries.order.len() > self.max_entries.saturating_mul(2) {
+            let Entries { map, order } = &mut *entries;
+            order.retain(|k| map.contains_key(k));
+        }
         Some(())
     }
 
@@ -75,6 +84,14 @@ impl<V: Clone> TtlCache<V> {
         if let Ok(mut entries) = self.entries.lock() {
             entries.map.remove(key);
         }
+    }
+
+    /// Length of the internal insertion-order queue — `#[doc(hidden)]`
+    /// test instrumentation for the FINDING F25 compaction pin, same
+    /// status as the module itself: not public API, not semver.
+    #[doc(hidden)]
+    pub fn order_len(&self) -> usize {
+        self.entries.lock().map(|e| e.order.len()).unwrap_or(0)
     }
 
     pub fn clear(&self) {

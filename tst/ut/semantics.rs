@@ -330,3 +330,153 @@ fn finding_f6b_invisible_format_characters_are_stripped() {
         "invisible format characters must not survive the boundary"
     );
 }
+
+/// FINDING F21 — the Cf range table in `is_invisible` has gaps: the Arabic
+/// number marks U+0890–0891 (Unicode 14), the shorthand format controls
+/// U+1BCA0–1BCA3 and the Egyptian format controls U+13440–13455 (Unicode 15)
+/// are all Category Cf — invisible, spoofing and search-dodging exactly like
+/// the entries the table already carries. The same review caught the
+/// announcement `start_date`/`end_date` fields: free-text wire fields like
+/// their sanitized siblings `title`/`content`, yet passed through verbatim.
+#[test]
+fn finding_f21_full_cf_table_and_announcement_dates_are_sanitized() {
+    let evil = "A\u{0890}B\u{0891}C\u{1BCA0}D\u{1BCA3}E\u{13440}F\u{13455}G";
+    let c = conf(json!({
+        "times": ["06:30", "08:00", "13:00", "15:30", "17:45"],
+        "calendar": [ { "1": valid_row() } ],
+        "name": evil,
+        "announcements": [
+            { "title": "\u{200B}t", "start_date": evil, "end_date": "\u{202E}x" }
+        ],
+    }));
+    assert_eq!(
+        c.name.as_deref(),
+        Some("ABCDEFG"),
+        "every Category Cf character must be stripped, whatever table entry covers it"
+    );
+    let ann = &c.announcements[0];
+    assert_eq!(
+        ann.start_date.as_deref(),
+        Some("ABCDEFG"),
+        "announcement start_date is free text and must be sanitized"
+    );
+    assert_eq!(ann.end_date.as_deref(), Some("x"));
+}
+
+/// FINDING F26 — `find_conf_data_json` re-scanned after every failed
+/// candidate: a failed balanced scan had consumed to EOF, yet the loop
+/// advanced one marker and scanned again, so k unbalanced `confData = {`
+/// markers cost O(k·n) CPU on one request (the reqwest timeout does not
+/// cover parsing). The tightened contract: once a candidate's balanced
+/// scan runs past the end of input, the scan *ends* — a balanced literal
+/// nested inside a broken object is not an assignment the page made.
+#[test]
+fn finding_f26_a_failed_candidate_ends_the_scan() {
+    // The first candidate is unbalanced to EOF; a *balanced* literal sits
+    // inside it. The old loop found the nested one; the page itself is
+    // broken JavaScript — there is no real confData assignment.
+    let good = r#"{"times":["05:27","06:37","13:21","16:37","19:24"],"calendar":[{"1":["05:27","06:37","07:07","13:21","16:37","19:24"]}]}"#;
+    let page = format!(
+        r#"<script>var confData = {{ junk, oops: confData = {good}; </script>"#
+    );
+    assert!(
+        parse_page(&page, "f26").is_err(),
+        "a balanced literal nested in a failed candidate is not the page's confData"
+    );
+}
+
+/// FINDING F28 / ADR-0015 — `iqama_at` instants are mosque-local wall
+/// clock; the zone must come from the page through the validated
+/// [`ConfData::timezone`] accessor, never from a guess. A hostile,
+/// malformed or absent designator is "no zone published", never a value.
+#[test]
+fn finding_f28_timezone_accessor_validates_the_wire_designator() {
+    let base = json!({
+        "times": ["06:30", "08:00", "13:00", "15:30", "17:45"],
+        "calendar": [ { "1": valid_row() } ],
+    });
+    let mut good = base.clone();
+    good["timezone"] = json!("Europe/Paris");
+    assert_eq!(conf(good).timezone(), Some("Europe/Paris"));
+
+    let hostile = [
+        json!(""),                     // empty
+        json!("../.."),                // traversal
+        json!("/etc/passwd"),          // absolute path
+        json!("Europe/Paris\nEVIL"),   // control character
+        json!("E\u{200B}urope/Paris"), // invisible character
+        json!(42),                     // not a string
+        json!("A".repeat(65)),         // over the 64-byte bound
+        json!("Etc/../Pass"),          // `..` segment
+    ];
+    for bad in hostile {
+        let mut page = base.clone();
+        page["timezone"] = bad.clone();
+        assert_eq!(
+            conf(page).timezone(),
+            None,
+            "hostile designator {bad:?} must be None"
+        );
+    }
+
+    // Absent field: the mosque publishes no zone.
+    assert_eq!(conf(base).timezone(), None);
+}
+
+/// FINDING F29a — `++5` rode the lenient sign parse to "+5": one
+/// `strip_prefix('+')` left a second `+`, which `i64::from_str` accepts.
+/// The strict grammar is one sign then ASCII digits; anything else falls
+/// back to the adhan time like any unparseable entry (never a clamped
+/// near-miss).
+#[test]
+fn finding_f29a_double_sign_is_not_an_offset() {
+    // Normal mode: 5 times, the calendar row carries the shuruq column.
+    let row = ["05:27", "06:37", "07:07", "13:21", "16:37", "19:24"];
+    let c = conf(json!({
+        "times": ["05:27", "07:07", "13:21", "16:37", "19:24"],
+        "calendar": [ { "1": row } ],
+        "iqamaCalendar": [ { "1": ["++5", "+-5", "+ 5", "13:45", "+10"] } ],
+    }));
+    let today = mawaqit_api::times_for_date(&c, the_date()).unwrap();
+    let iq = today.iqama.expect("iqama present");
+    assert_eq!(
+        iq.fajr, "05:27",
+        "'++5' must fall back to the adhan, not adhan+5"
+    );
+    assert_eq!(iq.dhuhr, "07:07", "'+-5' must not resolve to a negative clamp");
+    assert_eq!(iq.asr, "13:26", "'+ 5' stays a valid +5 offset (13:21 + 5)");
+    assert_eq!(iq.maghrib, "13:45", "absolute times pass through");
+    assert_eq!(iq.isha, "19:34", "'+10' still resolves (19:24 + 10)");
+}
+
+/// FINDING F29c — payload-bearing error variants interpolated raw hostile
+/// strings into `Display` output (logs, tray toasts, terminals): a hostile
+/// mosque id, search word or wire value could be megabytes of control
+/// characters. Every payload is now sanitized and truncated at
+/// construction, so `Display` is bounded no matter the input.
+#[test]
+fn finding_f29c_error_payloads_are_bounded_and_sanitized() {
+    let hostile = format!("{}\u{202E}", "x".repeat(4096));
+    let err =
+        parse_page("<html>no confData here</html>", &hostile).unwrap_err();
+    let rendered = err.to_string();
+    assert!(
+        rendered.len() < 4096,
+        "error display must be bounded, got {} bytes",
+        rendered.len()
+    );
+    assert!(
+        !rendered.chars().any(char::is_control),
+        "error display must carry no control characters: {rendered:?}"
+    );
+
+    // A multi-byte hostile string exercises the char-boundary walk: the
+    // 128-byte cut lands inside an 'é' and must back up, not panic or
+    // split a code point.
+    let multibyte = "€".repeat(200); // 3-byte chars: byte 128 is mid-char
+    let err =
+        parse_page("<html>no confData here</html>", &multibyte).unwrap_err();
+    let rendered = err.to_string();
+    assert!(rendered.len() < 4096, "bounded, got {}", rendered.len());
+    assert!(std::str::from_utf8(rendered.as_bytes()).is_ok());
+}

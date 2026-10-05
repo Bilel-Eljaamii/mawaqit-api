@@ -61,3 +61,12 @@ re-opened, and the release gate below treats that as a blocker.
 - **Weekly:** campaigns 2–4 (site drift and fuzzer discoveries are
   time-dependent, not commit-dependent).
 - **Every release:** the full gate above, in order.
+
+## Round-2 HIL record (2026-10-06, issue #2 / findings F21–F30)
+
+| Probe | Result |
+| --- | --- |
+| Live world tour (`just live`) | run against the fixed tree — see the campaign log in the issue-closing comment |
+| Timezone wire-key confirmation (F28) | **confirmed**: `https://mawaqit.net/en/grande-mosquee-de-paris` publishes `"timezone":"Europe/Paris"` — the `ConfData::timezone()` accessor key and IANA-shape validation match the live wire |
+| CDN probe (F24) | **confirmed**: `cdn.mawaqit.net/audio/adhan-maquah.mp3` serves `audio/mp3`, 1 512 648 bytes — comfortably inside the 8 MB mid-stream cap |
+| Tor/SOCKS5 circuit probe (F29/F30 ingress through a proxy) | **not run** — no local tor daemon on the HIL host; the proxy path remains pinned by the pure validation/composition tests (ADR-0012's accepted approach, manual recipe in its Consequences) |

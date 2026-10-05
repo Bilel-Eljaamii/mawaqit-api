@@ -39,12 +39,25 @@ structure.**
   A `null` *inside* an iqama row is fatal *for that calendar only* (serde
   rejects the whole `iqamaCalendar`), which drops iqama but keeps adhan.
 - *Everything unmodeled survives* in `ConfData::raw` (`#[serde(flatten)]`)
-  so nothing is silently lost.
-- *Free-text display fields are sanitized, minimally*: C0/C1 and
-  bidi/isolate control characters are stripped from `name`, `jumua`,
-  `jumua2`, `image`, `shuruq` and announcement text at the boundary
-  (finding **F6**, fixed — `scraper::sanitize_text`). Content is otherwise
-  untouched: XSS strings still pass through verbatim (pinned by
+  so nothing is silently lost. The raw contract (round-2 review): `raw`
+  carries the wire's unmodeled values **as parsed, unsanitized** — it is
+  the documented escape hatch for consumers who need a field the client
+  does not model, and they own its handling. Sanitization applies to the
+  *modeled* free-text surfaces the library itself ships (search results
+  are fully sanitized, including their unmodeled extras, because a mosque
+  result is pure display metadata — F22).
+- *Free-text display fields are sanitized, minimally*: C0/C1 and the
+  invisible Format (Cf) family — bidi/isolate controls, zero-width
+  characters, the Arabic/shorthand/Egyptian format controls
+  (F6 + F21) — are stripped from `name`, `jumua`, `jumua2`, `image`,
+  `shuruq` and every announcement text field (including
+  `start_date`/`end_date`, F21) at the boundary. Since round 2 the
+  character policy lives in one shared module (`src/sanitize.rs`) applied
+  at **every** free-text ingress: the page parser, the search endpoint
+  (`Vec<Mosque>`, finding **F22** — hostile labels used to reach the
+  tray/UI verbatim) and the disk snapshot load (finding **F23**). Content
+  is otherwise untouched: XSS strings still pass through verbatim (pinned
+  by
   `tst/ct/hostile_http.rs::conf_page_hostile_xss_content_parses_structurally`);
   neutralizing markup is the render layer's job. Time strings are
   deliberately **not** sanitized — stripping could mint a valid `HH:MM`
