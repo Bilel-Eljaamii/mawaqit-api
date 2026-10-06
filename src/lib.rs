@@ -65,6 +65,10 @@ mod scraper;
 mod slug;
 /// Domain-core time policy (ADR-0014) — pure, compiles in `core`.
 mod time;
+/// Embedded Tor (the opt-in `builtin-tor` feature): a local SOCKS5
+/// listener over an embedded Arti client — ADR-0012 as amended.
+#[cfg(feature = "builtin-tor")]
+pub mod tor;
 pub mod voices;
 
 #[cfg(any(feature = "std", feature = "alloc"))]
@@ -92,6 +96,8 @@ pub use slug::page_url;
 pub use time::{
     MAX_NOTIFY_BEFORE_MIN, is_due, minutes_before, minutes_between,
 };
+#[cfg(feature = "builtin-tor")]
+pub use tor::{BUILTIN_TOR_PORT, BuiltinTor, BuiltinTorStatus, StartMode};
 #[cfg(feature = "std")]
 pub use voices::download_voice;
 pub use voices::{ADHAN_VOICES, AdhanVoice};

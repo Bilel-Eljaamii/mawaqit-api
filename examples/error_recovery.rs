@@ -50,6 +50,10 @@ fn describe(err: &MawaqitError) -> &'static str {
         MawaqitError::SearchWordTooLong => {
             "search word over the 128-byte bound — permanent, shorten it"
         }
+        #[cfg(feature = "builtin-tor")]
+        MawaqitError::Tor(_) => {
+            "embedded Tor failed — restart the stack, then retry"
+        }
         MawaqitError::Compact(_) => {
             "corrupt MQTC blob — repack from a fresh page, permanent"
         }

@@ -45,6 +45,14 @@ name = "voices"
 path = "tests/voices.rs"
 required-features = ["std"]
 
+# The embedded-Tor tier (issue #4 P7): feature-gated so the default test
+# run — and the default dependency tree — stay Arti-free. Needs
+# libsqlite3 at build time (tor-dirmgr's rusqlite without bundled).
+[[test]]
+name = "tor"
+path = "tests/tor.rs"
+required-features = ["builtin-tor"]
+
 [features]
 default = ["std"]
 # std: desktop/server/CLI — the domain (alloc tier) plus the transport
@@ -69,6 +77,12 @@ alloc = ["chrono/alloc", "serde/alloc", "serde_json/alloc", "dep:serde_json"]
 # heapless: pure zero-alloc MCU firmware — CompactCalendarView over
 # memory-mapped flash.
 heapless = ["dep:heapless", "dep:crc32fast"]
+# builtin-tor: embedded Tor (Arti) exposed to the HTTP stack as a local
+# SOCKS5 listener — zero external setup (ADR-0012, amended). Default-off:
+# the default build stays Arti-free, and the library never enables Tor by
+# itself. Needs libsqlite3 at build time (tor-dirmgr's rusqlite without
+# bundled sqlite).
+builtin-tor = ["std", "dep:arti-client", "tokio/net", "tokio/io-util"]
 
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["serde"] }
@@ -83,6 +97,7 @@ reqwest = { version = "0.13.5", features = [
 serde = { version = "1.0.229", default-features = false, features = ["derive"] }
 # Optional: no_std tiers without an allocator cannot compile serde_json at
 # all — it is wired into the `alloc` feature.
+arti-client = { version = "=0.47.0", optional = true }
 serde_json = { version = "1.0.151", default-features = false, optional = true }
 thiserror = { version = "2.0.21", default-features = false }
 tokio = { version = "1.53.2", features = [

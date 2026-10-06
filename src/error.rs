@@ -152,6 +152,12 @@ pub enum MawaqitError {
     #[error("search word exceeds the 128 byte limit")]
     SearchWordTooLong,
 
+    /// Embedded-Tor failure (`builtin-tor` feature, 0.6.0): listener,
+    /// config or client errors, bounded like every payload (F29).
+    #[cfg(feature = "builtin-tor")]
+    #[error("builtin tor: {0}")]
+    Tor(alloc::string::String),
+
     /// A packed MQTC payload or packer input failed its contract
     /// (`#![no_std]` firmware path); see [`CompactError`].
     #[cfg(feature = "heapless")]

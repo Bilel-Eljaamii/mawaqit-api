@@ -111,9 +111,13 @@ coverage:
     rm -rf target/coverage
     mkdir -p target/coverage
     TOTAL=0
-    for tier in ut ct fuzz voices; do
+    for tier in ut ct fuzz voices tor; do
         rm -f target/llvm-cov-target/*.profraw target/llvm-cov-target/*.profdata
-        cargo llvm-cov --no-report --test "$tier"
+        # The tor tier compiles the builtin-tor feature (issue #4 P7);
+        # needs libsqlite3 where it runs.
+        FEATURES=""
+        [ "$tier" = tor ] && FEATURES="--features builtin-tor"
+        cargo llvm-cov --no-report $FEATURES --test "$tier"
         bin=$(ls -t target/llvm-cov-target/debug/deps/"$tier"-* 2>/dev/null | grep -v '\.d$' | head -1)
         [ -n "$bin" ] || { echo "missing test binary for tier: $tier"; exit 1; }
         "$LPROFDATA" merge -o "target/coverage/prof-$tier.profdata" \
@@ -153,7 +157,7 @@ coverage:
     # tier binary executed it — i.e. its file:line appears in every tier's
     # zero list. Drives the badge, the terminal report and the gate.
     cat target/coverage/uncovered-*.txt | sort | uniq -c \
-        | awk -v tiers=4 '$1 == tiers { print $2 }' \
+        | awk -v tiers=5 '$1 == tiers { print $2 }' \
         > target/coverage/missed-union.txt
     missed_n=$(wc -l < target/coverage/missed-union.txt)
     awk -F: '{ print $1 }' target/coverage/missed-union.txt | sort | uniq -c \
@@ -193,7 +197,7 @@ coverage:
     fi
     rm -f target/coverage/uncovered-*.txt target/coverage/missed-union.txt \
         target/coverage/missed-perfile.txt target/coverage/perfile-ut.txt
-    for tier in ut ct fuzz voices; do
+    for tier in ut ct fuzz voices tor; do
         $LLCOV show -instr-profile "target/coverage/prof-$tier.profdata" \
             $(ls -t target/llvm-cov-target/debug/deps/"$tier"-* | grep -v '\.d$' | head -1) \
             --format=html --output-dir "target/coverage/html-$tier" \
