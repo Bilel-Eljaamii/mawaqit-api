@@ -95,6 +95,8 @@ live:
 # embeds a copy of the lib), so its summary cannot be used directly; the
 # per-binary show view is exact. The #[ignore]d live tier never executes
 # and is excluded; test files are not part of the measured surface.
+# Prints a per-file terminal report built from the same union the badge
+# and the gate use; part of `just verify`.
 coverage:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -141,13 +143,23 @@ coverage:
                 n=$(printf '%s\n' "$out" | awk -F'|' \
                     'NF >= 3 && $1 ~ /^[ ]*[0-9]+$/ && $2 ~ /^[ ]*[0-9]/ { n++ } END { print n + 0 }')
                 TOTAL=$((TOTAL + n))
+                # The terminal report's per-file surface: the ut mapping
+                # (the same definition as TOTAL).
+                printf '%d %s\n' "$n" "$f" >> target/coverage/perfile-ut.txt
             fi
         done
     done
+    # The union of uncovered lines: a src line is uncovered only when NO
+    # tier binary executed it — i.e. its file:line appears in every tier's
+    # zero list. Drives the badge, the terminal report and the gate.
+    cat target/coverage/uncovered-*.txt | sort | uniq -c \
+        | awk -v tiers=4 '$1 == tiers { print $2 }' \
+        > target/coverage/missed-union.txt
+    missed_n=$(wc -l < target/coverage/missed-union.txt)
+    awk -F: '{ print $1 }' target/coverage/missed-union.txt | sort | uniq -c \
+        > target/coverage/missed-perfile.txt
     # The badge: the real percentage behind the gate, written before the
     # gate check so a failing run still records the honest number.
-    missed_n=$(cat target/coverage/uncovered-*.txt | sort | uniq -c \
-        | awk -v tiers=4 '$1 == tiers' | wc -l)
     covered=$((TOTAL - missed_n))
     pct=$((TOTAL > 0 ? covered * 100 / TOTAL : 0))
     color=brightgreen
@@ -155,16 +167,32 @@ coverage:
     mkdir -p target/coverage/badges
     printf '{"schemaVersion":1,"label":"line coverage","message":"%d%%","color":"%s"}\n' \
         "$pct" "$color" > target/coverage/badges/coverage.json
-    # Union gate: a src line is uncovered only when NO tier binary executed
-    # it — i.e. its file:line appears in every tier's zero list.
-    missed=$(cat target/coverage/uncovered-*.txt | sort | uniq -c \
-        | awk -v tiers=4 '$1 == tiers { print "  " $2 }')
-    if [ -n "$missed" ]; then
+    # Terminal report: per-file line coverage over the same union the
+    # badge and the gate use (total lines = ut mapping surface; missed =
+    # lines zero in every tier binary).
+    echo
+    echo "  src/ line coverage — union of the ut/ct/fuzz/voices tier binaries:"
+    printf '  %-24s %8s %8s %7s %10s\n' FILE LINES COVERED MISSED COVERAGE
+    tl=0; tc=0
+    while read -r n f; do
+        m=$(awk -v f="$f" '$2 == f { print $1; exit }' target/coverage/missed-perfile.txt)
+        m=${m:-0}
+        c=$((n - m))
+        tl=$((tl + n)); tc=$((tc + c))
+        p=$(awk -v c="$c" -v n="$n" 'BEGIN { printf "%.2f", (n > 0 ? c * 100 / n : 0) }')
+        printf '  %-24s %8d %8d %7d %9s%%\n' "$f" "$n" "$c" "$m" "$p"
+    done < <(sort -k2 target/coverage/perfile-ut.txt)
+    pp=$(awk -v c="$tc" -v n="$tl" 'BEGIN { printf "%.2f", (n > 0 ? c * 100 / n : 0) }')
+    printf '  %-24s %8d %8d %7d %9s%%\n' TOTAL "$tl" "$tc" "$missed_n" "$pp"
+    # Union gate: the report above is informational; the exit code is the
+    # gate.
+    if [ "$missed_n" -gt 0 ]; then
         echo "FAILED: src/ is not at 100% line coverage:"
-        echo "$missed"
+        sed 's/^/  /' target/coverage/missed-union.txt
         exit 1
     fi
-    rm -f target/coverage/uncovered-*.txt
+    rm -f target/coverage/uncovered-*.txt target/coverage/missed-union.txt \
+        target/coverage/missed-perfile.txt target/coverage/perfile-ut.txt
     for tier in ut ct fuzz voices; do
         $LLCOV show -instr-profile "target/coverage/prof-$tier.profdata" \
             $(ls -t target/llvm-cov-target/debug/deps/"$tier"-* | grep -v '\.d$' | head -1) \
@@ -213,9 +241,10 @@ graph:
 
 # THE gate: everything that must pass before a change is done.
 # Runs in order and fails fast: format check → clippy → type check →
-# no_std feature matrix → offline tests → docs → one network-free
-# example as an end-to-end smoke.
-verify: fmt-check lint check targets-mcu test doc
+# no_std feature matrix → offline tests → the coverage gate (100% of
+# src/ lines, per-file report printed to the terminal) → docs → one
+# network-free example as an end-to-end smoke.
+verify: fmt-check lint check targets-mcu test coverage doc
     just example page_scraper
     @echo
     @echo "✔ verify gate passed"

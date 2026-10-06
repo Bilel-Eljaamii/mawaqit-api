@@ -29,10 +29,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: thumbv7em-none-eabihf,riscv32imc-unknown-none-elf
+          components: llvm-tools-preview
 
       - uses: taiki-e/install-action@v2
         with:
-          tool: just
+          tool: just,cargo-llvm-cov
 
       - name: just verify
         run: just verify

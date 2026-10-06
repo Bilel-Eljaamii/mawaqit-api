@@ -26,9 +26,10 @@ re-opened, and the release gate below treats that as a blocker.
 ## Release gate (run in order; stop at first red)
 
 1. **`just verify`** — fmt, clippy `-D warnings`, type check, offline
-   tiers (lib + ut + ct + fuzz, findings included), docs, offline example
-   smoke. Must be 100 % green. Live tiers do **not** block here (they are
-   `#[ignore]`d).
+   tiers (lib + ut + ct + fuzz, findings included), the coverage gate
+   (100% of `src/` lines, per-file report printed to the terminal), docs,
+   offline example smoke. Must be 100 % green. Live tiers do **not**
+   block here (they are `#[ignore]`d).
 2. **Ledger check** — every finding in
    [`../README.md`](../README.md#red-team-findings-ledger) is Fixed or
    Documented-residual, and no finding test carries `#[ignore]` (a

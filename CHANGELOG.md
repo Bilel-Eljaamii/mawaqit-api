@@ -6,6 +6,14 @@ versioning: [semver](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `just verify` now runs the coverage gate and prints a per-file terminal
+  coverage report (File / Lines / Covered / Missed / Coverage, built from
+  the same per-binary union the badge and the 100% gate use — no llvm-cov
+  aggregate undercounting). The CI and release `verify` jobs install
+  `llvm-tools` + `cargo-llvm-cov` accordingly.
+
 ## [0.5.0] - 2026-10-06
 
 ### Fixed

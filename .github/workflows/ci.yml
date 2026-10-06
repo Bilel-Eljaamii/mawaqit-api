@@ -19,13 +19,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: thumbv7em-none-eabihf,riscv32imc-unknown-none-elf
+          components: llvm-tools-preview
 
       - uses: taiki-e/install-action@v2
         with:
-          tool: just
+          tool: just,cargo-llvm-cov
 
       # The full gate: fmt-check → clippy -D warnings → check →
       # targets-mcu (3 targets x {std, alloc, heapless}) → offline tests
+      # → coverage gate (100% of src/ lines, per-file terminal report)
       # → doc → network-free smoke example. Deliberately dependency-free
       # (no caching actions) so the gate itself has no supply chain.
       - name: just verify
