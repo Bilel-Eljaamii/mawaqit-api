@@ -85,7 +85,9 @@ pub use scraper::extract_conf_data as parse_page;
 pub use slug::is_valid_slug;
 #[cfg(any(feature = "std", feature = "alloc"))]
 pub use slug::page_url;
-pub use time::minutes_between;
+pub use time::{
+    MAX_NOTIFY_BEFORE_MIN, is_due, minutes_before, minutes_between,
+};
 #[cfg(feature = "std")]
 pub use voices::download_voice;
 pub use voices::{ADHAN_VOICES, AdhanVoice};

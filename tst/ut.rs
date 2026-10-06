@@ -38,5 +38,7 @@ mod corpus;
 mod scraper;
 #[path = "ut/semantics.rs"]
 mod semantics;
+#[path = "ut/time.rs"]
+mod time;
 #[path = "ut/voices.rs"]
 mod voices;

@@ -63,6 +63,9 @@ if let Some(today) = calendar.times_for_date(current_date) {
 | `month_iqama_times` | `(&ConfData, month: u32) -> Result<MonthIqamaTimes>` | Joins the iqama month against the adhan month by day; days without an adhan row are skipped. |
 | `times_for_date` | `(&ConfData, NaiveDate) -> Result<TodayTimes>` | Exact day lookup in the month; missing day → `NoCalendar`; iqama attached only when that day resolves in the iqama calendar. |
 | `minutes_between` | `(a: &str, b: &str) -> Option<i64>` | Minutes from `a` to `b` (b−a), midnight wrap handled (`23:30`→`00:10` = 40). `None` if either is not `HH:MM`. |
+| `is_due` | `(now: NaiveTime, hhmm: &str) -> bool` *(0.6.0, core tier)* | Alarm-window check: true within the 60 s after `hhmm` — a minute-tick loop fires each prayer exactly once. Unparsable `hhmm` is inert (`false`). |
+| `minutes_before` | `(hhmm: &str, minutes: u16) -> Option<NaiveTime>` *(0.6.0, core tier)* | The pre-notification instant, midnight wrap handled (00:05 with a 30-min heads-up → 23:35). `None` for hostile input; display string is the caller's `.format("%H:%M")`. |
+| `MAX_NOTIFY_BEFORE_MIN` | `u16 = 120` *(0.6.0)* | Sanity cap for attacker-writable notify-before config values. |
 
 `mawaqit_api::disk` is public by design (tests, tooling, examples): `store`,
 `load`, `load_as_of` *(0.5.0 — the testable staleness core, F27)*,
