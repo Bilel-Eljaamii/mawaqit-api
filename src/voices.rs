@@ -49,11 +49,15 @@ pub fn unique_tmp_path(dest: &Path) -> PathBuf {
 /// hostile id can never path-join its way out of `dir`.
 ///
 /// ```
+/// use std::path::Path;
 /// use mawaqit_api::voices::cached_path;
 ///
-/// let path = cached_path("/tmp/voices", "adhan-quds").unwrap();
+/// let path = cached_path(Path::new("/tmp/voices"), "adhan-quds").unwrap();
 /// assert!(path.ends_with("adhan-quds.mp3"));
-/// assert_eq!(cached_path("/tmp/voices", "../../etc/passwd"), None);
+/// assert_eq!(
+///     cached_path(Path::new("/tmp/voices"), "../../etc/passwd"),
+///     None
+/// );
 /// ```
 #[cfg(feature = "std")]
 pub fn cached_path(dir: &Path, id: &str) -> Option<PathBuf> {

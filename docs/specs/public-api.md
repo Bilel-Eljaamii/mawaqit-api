@@ -66,6 +66,19 @@ if let Some(today) = calendar.times_for_date(current_date) {
 | `is_due` | `(now: NaiveTime, hhmm: &str) -> bool` *(0.6.0, core tier)* | Alarm-window check: true within the 60 s after `hhmm` — a minute-tick loop fires each prayer exactly once. Unparsable `hhmm` is inert (`false`). |
 | `minutes_before` | `(hhmm: &str, minutes: u16) -> Option<NaiveTime>` *(0.6.0, core tier)* | The pre-notification instant, midnight wrap handled (00:05 with a 30-min heads-up → 23:35). `None` for hostile input; display string is the caller's `.format("%H:%M")`. |
 | `MAX_NOTIFY_BEFORE_MIN` | `u16 = 120` *(0.6.0)* | Sanity cap for attacker-writable notify-before config values. |
+| `parse_page`-adjacent view | — | *(0.6.0)* `ConfData::today_view(date) -> Result<TodayView>` — the one-call Today projection (see the `prayer` module); `TodayView` carries keyed announcements (`AnnouncementEntry::key`: wire id, else FNV-1a-64 of the content). |
+| — | `prayer` module *(0.6.0)* | `Prayer` (five adhan prayers; `ALL`/`key`/`display_name`/`parse`), `PrayerEventKind` (`Adhan`/`Iqama`/`Shuruq`; `state_key()` for dedup), `PrayerEvent { kind, at, minutes_remaining }`. Core tier — compiles at `heapless`. |
+| `next_event` | `TodayTimes::next_event(now) -> Option<PrayerEvent>` *(0.6.0)* | Next adhan/iqama/shuruq strictly after `now`, on the C1-rollover-correct `iqama_at` instants (a past-midnight iqama is tomorrow's); tomorrow's first adhan as the all-passed fallback; hostile hand-built fields inert. `CompactDayTimes`/`CompactCalendarView::next_event` are the heapless MQTC counterparts. |
+| `is_active_on` | `Announcement::is_active_on(date) -> Option<bool>` *(0.6.0)* | Announcement window: `%Y-%m-%d` bounds, missing = open, both missing = always active, unparsable = `None` (unknown, never a guess). |
+
+| `cached_path` | `(dir, id) -> Option<PathBuf>` — `voices` *(0.6.0)* | The `dir/{id}.mp3` cache convention, catalog-validated (non-catalog ids → `None`). |
+
+`mawaqit_api::tor` *(0.6.0, feature = "builtin-tor", default-off)*:
+`BuiltinTor::new(state_dir)` / `ensure_started() -> SocketAddr` /
+`socks_addr()` / `status()` / `StartMode` / `BUILTIN_TOR_PORT` — the
+embedded-Arti SOCKS5 listener (ADR-0012 as amended), composed with
+`with_socks_proxy("socks5h://{addr}")`. `MawaqitError::Tor(String)`
+(bounded) is its error variant.
 
 `mawaqit_api::disk` is public by design (tests, tooling, examples): `store`,
 `load`, `load_as_of` *(0.5.0 — the testable staleness core, F27)*,

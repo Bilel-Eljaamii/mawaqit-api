@@ -6,6 +6,58 @@ versioning: [semver](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-07
+
+### Added
+
+- **Consumer domain promotions (GitHub issue #4)** — the prayer-time
+  logic every mawaqit consumer had been re-implementing now lives in the
+  crate, so `mawaqit-tui` (and a migrated `mawaqit-desktop`) share one
+  tested implementation:
+  - `prayer` module (core tier — compiles at `heapless`): `Prayer` (the
+    five adhan prayers, stable keys), `PrayerEventKind`, `PrayerEvent`,
+    and `TodayTimes::next_event(now)` — the next adhan / iqama / shuruq
+    as absolute instants on the C1-rollover-correct `iqama_at`, with
+    tomorrow's first adhan as the all-passed fallback. Fixes the live
+    defect the desktop shipped: its string-sorted `next_prayer` placed a
+    past-midnight iqama on the wrong day.
+  - MCU-native counterpart: `CompactDayTimes::next_event(date, now)` and
+    `CompactCalendarView::next_event(date, now)` (heapless tier, zero
+    alloc, O(1) per day) — MQTC firmware gets next-prayer alarms from
+    flash, on the same core selection rule so desktop and firmware
+    semantics cannot drift.
+  - Core-tier alarm math in `time`: `is_due`, `minutes_before`
+    (midnight-wrapping pre-notification instant; returns `NaiveTime` —
+    the display string is the caller's), `MAX_NOTIFY_BEFORE_MIN`.
+    Contract-preserving port of the desktop's `prayer_logic.rs`
+    hostile-time tests.
+  - `ConfData::today_view(date) -> Result<TodayView>`: the one-call
+    projection (mosque name, jumu'a times, image, imsak mode, resolved
+    times, keyed announcements) with stable announcement keys (wire id,
+    else FNV-1a-64 of the content).
+  - `Announcement::is_active_on(date) -> Option<bool>`: active-window
+    test over `start_date`/`end_date` (`%Y-%m-%d`; missing bound = open;
+    unparsable bound = `None` — unknown, never a guess).
+  - `voices::cached_path(dir, id)`: the catalog-validated
+    `dir/{id}.mp3` cache convention (hostile ids cannot path-join out).
+  - `tor` module behind the **default-off `builtin-tor` feature**
+    (optional `arti-client =0.47.0`): embedded Arti exposed as a local
+    SOCKS5 listener — `BuiltinTor::new(state_dir)` + `ensure_started()`
+    composed with `with_socks_proxy("socks5h://{addr}")`. Socks5h-only,
+    fresh circuit per connection, never a silent direct fallback;
+    promoted from the desktop's battle-tested stack. ADR-0012 amended
+    ("never embed Arti" → "never in the default build; opt-in only,
+    never self-enabled").
+- `MawaqitError::Tor(String)` (bounded, F29 rules) behind `builtin-tor`;
+  `Prayer`/`PrayerEvent`/`PrayerEventKind` re-exported at the crate root.
+
+### Changed
+
+- The coverage gate is a **5-tier union** (ut/ct/fuzz/voices/tor) — the
+  `tor` tier compiles `--features builtin-tor` and needs `libsqlite3`
+  where it runs. `PartialEq` added to `Announcement`, `TodayTimes` and
+  `DailyIqamaInstants` (additive) for view comparisons.
+
 ## [0.5.1] - 2026-10-06
 
 ### Added

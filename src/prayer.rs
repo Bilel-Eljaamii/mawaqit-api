@@ -14,8 +14,18 @@
 //! past midnight belongs to *tomorrow* — never sorted back onto the
 //! wrong day the way string comparisons do.
 
-use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+#[cfg(all(feature = "alloc", not(feature = "std")))]
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
 
+use chrono::NaiveDateTime;
+#[cfg(any(feature = "std", feature = "alloc"))]
+use chrono::{NaiveDate, NaiveTime};
+
+#[cfg(any(feature = "std", feature = "alloc"))]
 use crate::{
     calendar::times_for_date,
     models::{Announcement, ConfData, DailyIqamaInstants, TodayTimes},
@@ -208,6 +218,7 @@ where
         })
 }
 
+#[cfg(any(feature = "std", feature = "alloc"))]
 impl TodayTimes {
     /// The next prayer event strictly after `now` (wall clock of the
     /// mosque, same frame as the displayed times): the adhan events, the
@@ -308,6 +319,7 @@ impl TodayTimes {
     }
 }
 
+#[cfg(any(feature = "std", feature = "alloc"))]
 impl DailyIqamaInstants {
     /// The iqama instant for one prayer (C1 rollover included).
     ///
@@ -340,6 +352,7 @@ impl DailyIqamaInstants {
 // The alloc-tier consumer surface: the Today view projection and the
 // announcement active-window test (both need `String`, hence alloc).
 
+#[cfg(any(feature = "std", feature = "alloc"))]
 /// One announcement as the Today view carries it: a stable identity
 /// [`key`](Self::key) for read-state plus the announcement itself.
 #[derive(Debug, Clone, PartialEq)]
@@ -352,6 +365,7 @@ pub struct AnnouncementEntry {
     pub announcement: Announcement,
 }
 
+#[cfg(any(feature = "std", feature = "alloc"))]
 /// The Today view: everything a consumer's main screen needs in one call
 /// (issue #4, P4) — the projection the desktop assembled as
 /// `TodayPayload::from_conf`, now owned by the crate. The offline
@@ -373,6 +387,7 @@ pub struct TodayView {
     pub announcements: Vec<AnnouncementEntry>,
 }
 
+#[cfg(any(feature = "std", feature = "alloc"))]
 impl ConfData {
     /// The Today view for `date`. `Err` exactly when the calendar cannot
     /// resolve the day (`times_for_date` semantics: `NoCalendar` /
@@ -389,7 +404,7 @@ impl ConfData {
     /// };</script></html>"#;
     /// let conf = parse_page(page, "paris").unwrap();
     /// let view = conf
-    ///     .today_view(NaiveDate::from_ymd_opt(2026, 10, 6).unwrap())
+    ///     .today_view(NaiveDate::from_ymd_opt(2026, 1, 1).unwrap())
     ///     .unwrap();
     /// assert_eq!(view.mosque_name.as_deref(), Some("Grande Mosquée"));
     /// assert_eq!(view.times.adhan.dhuhr, "13:21");
@@ -415,6 +430,7 @@ impl ConfData {
     }
 }
 
+#[cfg(any(feature = "std", feature = "alloc"))]
 /// FNV-1a 64-bit — deterministic across platforms and crate versions
 /// (a `DefaultHasher` is neither).
 fn fnv1a(bytes: &[u8]) -> u64 {
@@ -426,6 +442,7 @@ fn fnv1a(bytes: &[u8]) -> u64 {
     hash
 }
 
+#[cfg(any(feature = "std", feature = "alloc"))]
 /// Stable read-state key for an announcement: the wire id when present
 /// (number → string, non-empty string), else the FNV-1a identity hash.
 fn announcement_key(a: &Announcement) -> String {
@@ -449,6 +466,7 @@ fn announcement_key(a: &Announcement) -> String {
     }
 }
 
+#[cfg(any(feature = "std", feature = "alloc"))]
 impl Announcement {
     /// Whether the announcement's active window covers `date`:
     /// `start_date <= date <= end_date`, a missing bound open. `None`
