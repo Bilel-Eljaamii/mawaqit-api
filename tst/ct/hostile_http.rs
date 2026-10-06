@@ -636,8 +636,8 @@ async fn finding_f29b_oversized_search_word_is_refused_before_the_wire() {
 /// query carried the original: case-confusable words ("Paris" vs "paris",
 /// Turkish İ forms) collided on one key, so a second query could be served
 /// the first's cached results even though the server was asked a different
-/// question. The key is the exact request string.
-#[ignore = "RED TEAM FINDING F30: cache key = lowercased word, not the request identity — key on the exact request string"]
+/// question. FIXED: the key is the exact request string — an identical
+/// repeat stays cached, a distinct request string is a fresh wire query.
 #[tokio::test]
 async fn finding_f30_cache_key_is_the_exact_request_string() {
     let server =
