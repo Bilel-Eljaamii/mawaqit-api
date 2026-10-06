@@ -396,3 +396,24 @@ fn f24_tmp_names_are_unique_per_writer() {
     assert_ne!(a, b, "each writer gets its own temp file");
     assert!(a.to_string_lossy().ends_with(".tmp"));
 }
+
+/// FINDING P6 (issue #4): the cache-path convention is catalog-validated —
+/// the download writes `dir/{id}.mp3` and `cached_path` reads exactly that
+/// path for catalog ids; hostile ids never path-join out of the directory.
+#[test]
+fn p6_cached_path_is_catalog_validated() {
+    let dir = temp_dir("p6-cache");
+    let path = mawaqit_api::voices::cached_path(&dir, "adhan-quds")
+        .expect("catalog id");
+    assert_eq!(path, dir.join("adhan-quds.mp3"));
+    assert!(path.starts_with(&dir), "stays inside the directory");
+    for hostile in
+        ["../../etc/passwd", "", "unknown-voice", "adhan-quds/../../x"]
+    {
+        assert_eq!(
+            mawaqit_api::voices::cached_path(&dir, hostile),
+            None,
+            "{hostile:?} is not a catalog id"
+        );
+    }
+}

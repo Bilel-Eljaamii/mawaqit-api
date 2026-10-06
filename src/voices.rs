@@ -43,6 +43,28 @@ pub fn unique_tmp_path(dest: &Path) -> PathBuf {
     PathBuf::from(s)
 }
 
+/// The conventional cache path for a catalog voice: `dir/{id}.mp3` — the
+/// same layout [`download_voice`] writes and the desktop app reads.
+/// Catalog-validated: an id outside [`ADHAN_VOICES`] yields `None`, so a
+/// hostile id can never path-join its way out of `dir`.
+///
+/// ```
+/// use mawaqit_api::voices::cached_path;
+///
+/// let path = cached_path("/tmp/voices", "adhan-quds").unwrap();
+/// assert!(path.ends_with("adhan-quds.mp3"));
+/// assert_eq!(cached_path("/tmp/voices", "../../etc/passwd"), None);
+/// ```
+#[cfg(feature = "std")]
+pub fn cached_path(dir: &Path, id: &str) -> Option<PathBuf> {
+    Some(
+        dir.join(format!(
+            "{}.mp3",
+            ADHAN_VOICES.iter().find(|v| v.id == id)?.id
+        )),
+    )
+}
+
 /// One selectable adhan recording.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub struct AdhanVoice {
