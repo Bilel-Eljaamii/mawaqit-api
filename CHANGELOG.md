@@ -6,6 +6,8 @@ versioning: [semver](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-06
+
 ### Fixed
 
 - **Red-team round 2, network/ingress slate — F21–F30** (GitHub issue #2;
