@@ -12,7 +12,10 @@
 #[cfg(not(feature = "std"))]
 use alloc::string::String;
 
-use crate::models::{Announcement, ConfData, Mosque};
+use crate::models::{Announcement, ConfData};
+// std-tier: `Mosque` is only touched by the std-only search-ingress pass.
+#[cfg(feature = "std")]
+use crate::models::Mosque;
 
 /// Strip control characters and the invisible Unicode *Format* (Cf)
 /// category from free-text display fields — FINDING F6 and its review
@@ -56,7 +59,8 @@ fn is_invisible(ch: char) -> bool {
 /// modeled fields, the string-valued `id`, and every string anywhere inside
 /// the flattened `extra` map — a mosque result is pure display metadata, so
 /// unlike [`confdata`] there is no time-string carve-out and the recursion
-/// is total.
+/// is total. std-tier: its only caller is the search client.
+#[cfg(feature = "std")]
 pub(crate) fn mosque(m: &mut Mosque) {
     m.uuid = m.uuid.take().map(|s| text(&s));
     m.slug = m.slug.take().map(|s| text(&s));

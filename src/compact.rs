@@ -892,6 +892,9 @@ impl CompactCalendarBuilder {
 /// (FINDING F29): `[A-Za-z_][A-Za-z0-9_]*`, at most 64 bytes. The emitters
 /// interpolate the name verbatim into source — anything else is code
 /// injection into the firmware build, so it is rejected outright.
+/// Alloc-tier like its only callers (the emitters); it does not exist in
+/// the heapless-only tier, where the builder is compiled out.
+#[cfg(any(feature = "std", feature = "alloc"))]
 fn is_valid_const_name(name: &str) -> bool {
     let bytes = name.as_bytes();
     bytes.len() <= 64
