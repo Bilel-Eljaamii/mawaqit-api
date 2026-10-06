@@ -236,7 +236,7 @@ impl TodayTimes {
     /// let next = today
     ///     .next_event(NaiveTime::from_hms_opt(10, 0, 0).unwrap())
     ///     .unwrap();
-    /// assert_eq!(next.kind.label(), "Dhuhr");
+    /// assert_eq!(next.kind.label(), "Dhuhr adhan");
     /// assert_eq!(next.minutes_remaining, 201);
     /// ```
     pub fn next_event(&self, now: NaiveTime) -> Option<PrayerEvent> {

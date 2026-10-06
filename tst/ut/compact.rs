@@ -4,10 +4,13 @@
 //! bitfield, Jumu'ah header fields, year-end boundaries, and the payload
 //! emitters.
 
-use chrono::NaiveDate;
-use mawaqit_api::compact::{
-    CompactCalendarBuilder, CompactCalendarView, CompactDayInput, CompactError,
-    CompactIqamaInput, ScopeType,
+use chrono::{NaiveDate, NaiveTime};
+use mawaqit_api::{
+    compact::{
+        CompactCalendarBuilder, CompactCalendarView, CompactDayInput,
+        CompactError, CompactIqamaInput, ScopeType,
+    },
+    prayer::{Prayer, PrayerEventKind},
 };
 
 /// Deterministic xorshift64* — no rng dependency in the offline suite.
@@ -701,4 +704,143 @@ fn finding_f29d_const_name_is_validated_before_interpolation() {
     let ok = "PRAYER_CALENDAR_V1";
     assert!(payload.to_rust_code(ok).is_ok());
     assert!(payload.to_c_header(ok).is_ok());
+}
+
+// ------------------------------------------------- next_event (issue #4, P2b)
+
+/// A two-day payload: day 0 carries per-prayer iqama with a rollover isha
+/// (00:20 next day); day 1 is adhan-only. The view borrows the bytes —
+/// bind them in the caller.
+fn two_day_payload(start: NaiveDate) -> Vec<u8> {
+    let mut b = CompactCalendarBuilder::new(start, ScopeType::Week, false);
+    b.push_day(CompactDayInput {
+        adhan: [330, 427, 781, 997, 1164, 1265],
+        iqama: [
+            Some(CompactIqamaInput { minutes: 345, rollover: false }),
+            Some(CompactIqamaInput { minutes: 795, rollover: false }),
+            Some(CompactIqamaInput { minutes: 1010, rollover: false }),
+            Some(CompactIqamaInput { minutes: 1180, rollover: false }),
+            Some(CompactIqamaInput { minutes: 20, rollover: true }),
+        ],
+        day_flags: 0,
+    });
+    b.push_day(CompactDayInput {
+        adhan: [331, 428, 782, 998, 1165, 1266],
+        iqama: [None, None, None, None, None],
+        day_flags: 0,
+    });
+    b.to_bytes().unwrap()
+}
+
+/// P2b: the upcoming adhan answers, with minutes-to-go.
+#[test]
+fn p2b_compact_next_event_picks_upcoming_adhan() {
+    let start = date(2026, 10, 6);
+    let bytes = two_day_payload(start);
+    let view = CompactCalendarView::from_bytes(&bytes).unwrap();
+    let day = view.times_for_date(start).unwrap();
+    let next = day
+        .next_event(start, NaiveTime::from_hms_opt(10, 0, 0).unwrap())
+        .unwrap();
+    assert_eq!(next.kind.label(), "Dhuhr adhan");
+    assert_eq!(next.at, start.and_hms_opt(13, 1, 0).unwrap());
+    assert_eq!(next.minutes_remaining, 181);
+}
+
+/// P2b: the rollover bit moves the iqama to the NEXT calendar day — at
+/// 23:50 the 00:20 (next-day) isha iqama is what's next, at tomorrow's
+/// instant (C1).
+#[test]
+fn p2b_compact_rollover_iqama_is_a_tomorrow_instant() {
+    let start = date(2026, 10, 6);
+    let bytes = two_day_payload(start);
+    let view = CompactCalendarView::from_bytes(&bytes).unwrap();
+    let day = view.times_for_date(start).unwrap();
+    let next = day
+        .next_event(start, NaiveTime::from_hms_opt(23, 50, 0).unwrap())
+        .unwrap();
+    assert_eq!(next.kind, PrayerEventKind::Iqama(Prayer::Isha));
+    assert_eq!(
+        next.at,
+        start.succ_opt().unwrap().and_hms_opt(0, 20, 0).unwrap()
+    );
+}
+
+/// P2b: iqama fields without the VALID bit are inert — the day resolves
+/// to adhan-only events.
+#[test]
+fn p2b_compact_skips_invalid_iqama() {
+    let start = date(2026, 10, 6);
+    let mut b = CompactCalendarBuilder::new(start, ScopeType::Week, false);
+    b.push_day(CompactDayInput {
+        adhan: [330, 427, 781, 997, 1164, 1265],
+        iqama: [None, None, None, None, None],
+        day_flags: 0,
+    });
+    let bytes = b.to_bytes().unwrap();
+    let view = CompactCalendarView::from_bytes(&bytes).unwrap();
+    let day = view.times_for_date(start).unwrap();
+    let mut now = NaiveTime::from_hms_opt(0, 0, 0).unwrap();
+    let mut kinds = Vec::new();
+    while let Some(event) = day.next_event(start, now) {
+        kinds.push(event.kind.label().to_string());
+        now = event.at.time();
+        now += chrono::Duration::minutes(1);
+    }
+    assert_eq!(
+        kinds,
+        [
+            "Fajr adhan",
+            "Shurouq",
+            "Dhuhr adhan",
+            "Asr adhan",
+            "Maghrib adhan",
+            "Isha adhan"
+        ]
+    );
+}
+
+/// P2b: after the start day's last event, the view falls through to the
+/// next day's Fajr adhan.
+#[test]
+fn p2b_view_next_event_falls_through_to_tomorrow() {
+    let start = date(2026, 10, 6);
+    let bytes = two_day_payload(start);
+    let view = CompactCalendarView::from_bytes(&bytes).unwrap();
+    // At day-0 23:00 the rollover isha iqama (tomorrow 00:20) is next —
+    // ahead of tomorrow's Fajr adhan.
+    let next = view
+        .next_event(start, NaiveTime::from_hms_opt(23, 0, 0).unwrap())
+        .unwrap();
+    assert_eq!(next.kind, PrayerEventKind::Iqama(Prayer::Isha));
+    assert_eq!(
+        next.at,
+        start.succ_opt().unwrap().and_hms_opt(0, 20, 0).unwrap()
+    );
+    // Once that instant passed, day 1 (adhan-only) answers: its Fajr.
+    let next = view
+        .next_event(
+            start.succ_opt().unwrap(),
+            NaiveTime::from_hms_opt(1, 0, 0).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(next.kind, PrayerEventKind::Adhan(Prayer::Fajr));
+    assert_eq!(
+        next.at,
+        start.succ_opt().unwrap().and_hms_opt(5, 31, 0).unwrap()
+    );
+}
+
+/// P2b: past the scope's end there is nothing ahead — `None`, never a
+/// wraparound into day 0.
+#[test]
+fn p2b_view_next_event_beyond_scope_is_none() {
+    let start = date(2026, 10, 6);
+    let bytes = two_day_payload(start);
+    let view = CompactCalendarView::from_bytes(&bytes).unwrap();
+    let last = start.succ_opt().unwrap();
+    assert!(
+        view.next_event(last, NaiveTime::from_hms_opt(23, 59, 0).unwrap())
+            .is_none()
+    );
 }

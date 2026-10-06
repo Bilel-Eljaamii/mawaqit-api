@@ -53,7 +53,9 @@ use core::fmt::Write as _;
 
 #[cfg(any(feature = "std", feature = "alloc"))]
 use chrono::Datelike;
-use chrono::{Days, NaiveDate};
+use chrono::{Days, NaiveDate, NaiveDateTime, NaiveTime};
+
+use crate::prayer::PrayerEvent;
 
 /// Magic bytes every MQTC payload starts with.
 pub const MAGIC: [u8; 4] = *b"MQTC";
@@ -308,6 +310,111 @@ pub struct CompactDayTimes {
     pub day_flags: u8,
 }
 
+impl CompactDayTimes {
+    /// This day's candidate events as absolute instants — a fixed array,
+    /// zero heap: five adhan + shuruq + the five valid iqama instants
+    /// (rollover bit → next calendar day, C1).
+    fn candidates(
+        &self,
+        date: NaiveDate,
+    ) -> [Option<(NaiveDateTime, crate::prayer::PrayerEventKind)>; 11] {
+        use crate::prayer::{Prayer, PrayerEventKind};
+
+        let instant = |minutes: u16, rollover: bool| -> Option<NaiveDateTime> {
+            let day = if rollover {
+                date.checked_add_days(Days::new(1))?
+            } else {
+                date
+            };
+            day.and_hms_opt((minutes / 60) as u32, (minutes % 60) as u32, 0)
+        };
+
+        let mut slots: [Option<(NaiveDateTime, PrayerEventKind)>; 11] =
+            [None; 11];
+        let mut i = 0;
+        let adhan = [
+            (self.adhan.fajr, PrayerEventKind::Adhan(Prayer::Fajr)),
+            (self.adhan.shurouq, PrayerEventKind::Shuruq),
+            (self.adhan.dhuhr, PrayerEventKind::Adhan(Prayer::Dhuhr)),
+            (self.adhan.asr, PrayerEventKind::Adhan(Prayer::Asr)),
+            (self.adhan.maghrib, PrayerEventKind::Adhan(Prayer::Maghrib)),
+            (self.adhan.isha, PrayerEventKind::Adhan(Prayer::Isha)),
+        ];
+        for (time, kind) in adhan {
+            if let Some(at) = instant(time.minutes_from_midnight(), false) {
+                slots[i] = Some((at, kind));
+                i += 1;
+            }
+        }
+        if let Some(iqama) = &self.iqama {
+            let iqama_rows = [
+                (iqama.fajr, Prayer::Fajr),
+                (iqama.dhuhr, Prayer::Dhuhr),
+                (iqama.asr, Prayer::Asr),
+                (iqama.maghrib, Prayer::Maghrib),
+                (iqama.isha, Prayer::Isha),
+            ];
+            for (time, prayer) in iqama_rows {
+                if time.is_valid()
+                    && let Some(at) = instant(
+                        time.minutes_from_midnight(),
+                        time.is_rollover(),
+                    )
+                {
+                    slots[i] = Some((at, PrayerEventKind::Iqama(prayer)));
+                    i += 1;
+                }
+            }
+        }
+        slots
+    }
+
+    /// This day's next prayer event strictly after `now` (mosque-local
+    /// wall clock), resolved through the same core rule the wire client
+    /// uses — desktop and MCU semantics cannot drift. Zero allocation:
+    /// candidates live in a fixed array. Hostile or invalid fields are
+    /// inert; `None` when the day offers nothing ahead.
+    ///
+    /// ```
+    /// use chrono::{NaiveDate, NaiveTime};
+    /// use mawaqit_api::compact::{
+    ///     CompactCalendarBuilder, CompactCalendarView, CompactDayInput,
+    ///     CompactIqamaInput, ScopeType,
+    /// };
+    ///
+    /// let start = NaiveDate::from_ymd_opt(2026, 10, 6).unwrap();
+    /// let mut b = CompactCalendarBuilder::new(start, ScopeType::Week, false);
+    /// b.push_day(CompactDayInput {
+    ///     adhan: [330, 427, 781, 997, 1164, 1265],
+    ///     iqama: [
+    ///         Some(CompactIqamaInput { minutes: 345, rollover: false }),
+    ///         Some(CompactIqamaInput { minutes: 795, rollover: false }),
+    ///         Some(CompactIqamaInput { minutes: 1010, rollover: false }),
+    ///         Some(CompactIqamaInput { minutes: 1180, rollover: false }),
+    ///         Some(CompactIqamaInput { minutes: 20, rollover: true }),
+    ///     ],
+    ///     day_flags: 0,
+    /// });
+    /// let bytes = b.to_bytes().unwrap();
+    /// let view = CompactCalendarView::from_bytes(&bytes).unwrap();
+    /// let day = view.times_for_date(start).unwrap();
+    /// let next = day
+    ///     .next_event(start, NaiveTime::from_hms_opt(10, 0, 0).unwrap())
+    ///     .unwrap();
+    /// assert_eq!(next.kind.label(), "Dhuhr adhan");
+    /// ```
+    pub fn next_event(
+        &self,
+        date: NaiveDate,
+        now: NaiveTime,
+    ) -> Option<crate::prayer::PrayerEvent> {
+        crate::prayer::select_next(
+            self.candidates(date).into_iter().flatten(),
+            date.and_time(now),
+        )
+    }
+}
+
 /// Zero-copy runtime view over MQTC bytes — flash-resident data, queried
 /// in O(1) with zero heap. Load validates magic, version, bounds, the
 /// CRC-32 checksum, and the start date; after that, reads are infallible.
@@ -469,6 +576,73 @@ impl<'a> CompactCalendarView<'a> {
         } else {
             Self::decode_direct(record.try_into().ok()?)
         }
+    }
+
+    /// The next prayer event after `now`, starting the search on `date`
+    /// and falling through to the next day while the scope has records —
+    /// the MCU alarm loop's entry point. Zero allocation, O(1) per day
+    /// consulted; `None` when the scope offers nothing ahead (its end).
+    ///
+    /// ```
+    /// use chrono::{NaiveDate, NaiveTime};
+    /// use mawaqit_api::compact::{
+    ///     CompactCalendarBuilder, CompactCalendarView, CompactDayInput,
+    ///     CompactIqamaInput, ScopeType,
+    /// };
+    ///
+    /// let start = NaiveDate::from_ymd_opt(2026, 10, 6).unwrap();
+    /// let mut b = CompactCalendarBuilder::new(start, ScopeType::Week, false);
+    /// for _ in 0..2 {
+    ///     b.push_day(CompactDayInput {
+    ///         adhan: [330, 427, 781, 997, 1164, 1265],
+    ///         iqama: [
+    ///             Some(CompactIqamaInput { minutes: 345, rollover: false }),
+    ///             Some(CompactIqamaInput { minutes: 795, rollover: false }),
+    ///             Some(CompactIqamaInput { minutes: 1010, rollover: false }),
+    ///             Some(CompactIqamaInput { minutes: 1180, rollover: false }),
+    ///             Some(CompactIqamaInput { minutes: 20, rollover: true }),
+    ///         ],
+    ///         day_flags: 0,
+    ///     });
+    /// }
+    /// let bytes = b.to_bytes().unwrap();
+    /// let view = CompactCalendarView::from_bytes(&bytes).unwrap();
+    /// // Late on the start day, the isha iqama (00:20, rolled to the next
+    /// // day) is what's next — C1 rollover, not tomorrow's Fajr.
+    /// let next = view
+    ///     .next_event(start, NaiveTime::from_hms_opt(23, 0, 0).unwrap())
+    ///     .unwrap();
+    /// assert_eq!(next.kind.label(), "Isha iqama");
+    /// assert_eq!(next.at.date(), NaiveDate::from_ymd_opt(2026, 10, 7).unwrap());
+    /// // Once that passed, the second day answers with its Fajr adhan.
+    /// let next = view
+    ///     .next_event(
+    ///         NaiveDate::from_ymd_opt(2026, 10, 7).unwrap(),
+    ///         NaiveTime::from_hms_opt(1, 0, 0).unwrap(),
+    ///     )
+    ///     .unwrap();
+    /// assert_eq!(next.kind.label(), "Fajr adhan");
+    /// ```
+    pub fn next_event(
+        &self,
+        date: NaiveDate,
+        now: NaiveTime,
+    ) -> Option<PrayerEvent> {
+        let now_dt = date.and_time(now);
+        let today = self.times_for_date(date);
+        let tomorrow = date
+            .checked_add_days(Days::new(1))
+            .and_then(|d| self.times_for_date(d).map(|day| (d, day)));
+        let today_candidates = today.map(|day| day.candidates(date));
+        let tomorrow_candidates = tomorrow.map(|(d, day)| day.candidates(d));
+        crate::prayer::select_next(
+            today_candidates
+                .into_iter()
+                .flatten()
+                .flatten()
+                .chain(tomorrow_candidates.into_iter().flatten().flatten()),
+            now_dt,
+        )
     }
 
     /// Decode a direct-format record. Strict beyond the CRC (FINDING F13):

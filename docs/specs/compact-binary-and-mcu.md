@@ -142,6 +142,15 @@ Designed for constrained storage while requiring **zero heap memory and ~20 byte
 
 ## Runtime Lookup Contract (`CompactCalendarView`)
 
+Next-event resolution (issue #4, P2b, 0.6.0):
+`CompactDayTimes::next_event(date, now) -> Option<PrayerEvent>` and the
+view-level `CompactCalendarView::next_event(date, now)` (falls through to
+the next day while the scope has records) resolve the upcoming adhan,
+shuruq and valid iqama instants — rollover-bit iqamas land on their next
+calendar day (C1). Zero allocation (fixed candidate array), O(1) per day
+consulted; built on the same core selection rule the wire client uses, so
+MCU and desktop semantics cannot drift.
+
 ### 1. Integrity Verification on Load
 
 ```rust
