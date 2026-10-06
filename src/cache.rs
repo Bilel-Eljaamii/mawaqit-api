@@ -28,6 +28,8 @@ struct Entries<V> {
 }
 
 impl<V: Clone> TtlCache<V> {
+    /// A cache with the given per-entry TTL and FIFO entry cap (at least
+    /// one; smaller values are clamped).
     pub fn new(ttl: Duration, max_entries: usize) -> Self {
         Self {
             entries: Mutex::new(Entries {
@@ -39,6 +41,8 @@ impl<V: Clone> TtlCache<V> {
         }
     }
 
+    /// The value for `key`, if present and still inside its TTL. An entry
+    /// first touched after expiry is removed on the spot (lazy eviction).
     pub fn get(&self, key: &str) -> Option<V> {
         let mut entries = self.entries.lock().ok()?;
         let (created, value) = entries.map.get(key)?;
@@ -49,6 +53,9 @@ impl<V: Clone> TtlCache<V> {
         Some(value.clone())
     }
 
+    /// Insert or refresh `key`, stamping a fresh TTL. Over the cap, the
+    /// oldest still-present entries are evicted FIFO. A poisoned mutex
+    /// degrades to "no caching", never a panic or a failed insert.
     pub fn insert(&self, key: String, value: V) {
         // A poisoned mutex only means "no caching"; never propagate.
         let _ = self.insert_if_healthy(key, value);
@@ -80,6 +87,9 @@ impl<V: Clone> TtlCache<V> {
         Some(())
     }
 
+    /// Drop one key immediately (the client's `invalidate` contract). The
+    /// key's insertion-order entry is left to the F25 compaction, which
+    /// reaps it on the next insert over the watermark.
     pub fn invalidate(&self, key: &str) {
         if let Ok(mut entries) = self.entries.lock() {
             entries.map.remove(key);
@@ -94,6 +104,8 @@ impl<V: Clone> TtlCache<V> {
         self.entries.lock().map(|e| e.order.len()).unwrap_or(0)
     }
 
+    /// Drop every entry and the insertion-order queue — the client's
+    /// "invalidate everything" contract (H1).
     pub fn clear(&self) {
         if let Ok(mut entries) = self.entries.lock() {
             entries.map.clear();

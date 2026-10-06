@@ -214,6 +214,20 @@ fn raw_month(
 /// Days are deduplicated, and the canonical decimal key (`"1"`) always wins
 /// over its variants; among variants alone, BTreeMap order decides
 /// deterministically.
+///
+/// # Examples
+///
+/// ```rust
+/// use mawaqit_api::{ConfData, month_times};
+///
+/// let conf: ConfData = serde_json::from_str(r#"{
+///     "calendar": [{"1": ["05:30", "06:45", "12:30", "15:45", "18:20", "20:00"]}]
+/// }"#).unwrap();
+///
+/// let month = month_times(&conf, 1).unwrap();
+/// assert_eq!(month.days[0].times.fajr, "05:30");
+/// assert!(month.dropped.is_empty());
+/// ```
 pub fn month_times(conf: &ConfData, month: u32) -> Result<MonthTimes> {
     let raw = raw_month(&conf.calendar, month)?;
     let mut by_day: BTreeMap<u32, DailyPrayerTimes> = BTreeMap::new();
@@ -280,6 +294,20 @@ fn resolved_iqama_month(conf: &ConfData, month: u32) -> Result<IqamaMonth> {
 
 /// Resolved iqama times for every day of a month (uses the adhan calendar
 /// to expand "+N" entries). Same duplicate-day rule as [`month_times`].
+///
+/// # Examples
+///
+/// ```rust
+/// use mawaqit_api::{ConfData, month_iqama_times};
+///
+/// let conf: ConfData = serde_json::from_str(r#"{
+///     "calendar": [{"1": ["05:30", "06:45", "12:30", "15:45", "18:20", "20:00"]}],
+///     "iqamaCalendar": [{"1": ["+15", "+15", "+15", "+15", "+15"]}]
+/// }"#).unwrap();
+///
+/// let month = month_iqama_times(&conf, 1).unwrap();
+/// assert_eq!(month.days[0].times.fajr, "05:45");
+/// ```
 pub fn month_iqama_times(
     conf: &ConfData,
     month: u32,
@@ -299,6 +327,25 @@ pub fn month_iqama_times(
 /// cannot say. A day the calendar rejected as malformed surfaces as
 /// [`MawaqitError::InvalidDay`] — never as fabricated times; `NoCalendar`
 /// means the day is genuinely absent from the mosque's calendar.
+///
+/// # Examples
+///
+/// ```rust
+/// use chrono::NaiveDate;
+/// use mawaqit_api::{ConfData, times_for_date};
+///
+/// let conf: ConfData = serde_json::from_str(r#"{
+///     "calendar": [{"15": ["05:30", "06:45", "12:30", "15:45", "18:20", "20:00"]}],
+///     "iqamaCalendar": [{"15": ["+15", "+15", "+15", "+15", "+15"]}]
+/// }"#).unwrap();
+///
+/// let today = times_for_date(&conf, NaiveDate::from_ymd_opt(2026, 1, 15).unwrap())
+///     .unwrap();
+/// assert_eq!(today.adhan.fajr, "05:30");
+/// assert_eq!(today.iqama.as_ref().unwrap().fajr, "05:45");
+/// // The instant is the rollover-correct absolute time (mosque-local wall clock).
+/// assert_eq!(today.iqama_at.unwrap().fajr.to_string(), "2026-01-15 05:45:00");
+/// ```
 pub fn times_for_date(conf: &ConfData, date: NaiveDate) -> Result<TodayTimes> {
     let month = date.month();
     let day = date.day();

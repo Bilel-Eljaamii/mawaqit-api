@@ -1,0 +1,61 @@
+# Weekly libFuzzer campaign — the nightly/manual tier from
+# docs/test-specs/fuzz/libfuzzer-campaign.md, on a schedule so the hostile
+# corpus keeps growing even when nobody remembers to run `just fuzz`.
+# Every target runs for a fixed wall-clock budget; any crash input fails
+# the job and is uploaded for replay via
+#   cargo fuzz run <target> <crash-file>
+name: fuzz-weekly
+
+on:
+  schedule:
+    # Mondays 03:00 UTC — spread from the mutation campaign (Wednesdays)
+    # and the regular CI, so a runner crunch never collides.
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+    inputs:
+      seconds_per_target:
+        description: 'Wall-clock seconds per fuzz target'
+        required: false
+        default: '600'
+
+permissions:
+  contents: read
+
+jobs:
+  libfuzzer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [parse_page, conf_pipeline]
+    steps:
+      - uses: actions/checkout@v4
+
+      # cargo-fuzz builds with coverage/sanitizers — nightly only.
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+
+      - name: Fuzz ${{ matrix.target }}
+        run: |
+          cargo fuzz run ${{ matrix.target }} -- \
+            -max_total_time=${{ github.event.inputs.seconds_per_target || '600' }} \
+            -rss_limit_mb=4096 \
+            -timeout=25 \
+            -print_final_stats=1
+
+      # The crash (or OOM/timeout) input that killed the target — the
+      # regression test starts by replaying it.
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crash-${{ matrix.target }}
+          path: |
+            fuzz/artifacts/
+            fuzz/crash-*
+          if-no-files-found: ignore
+          retention-days: 30

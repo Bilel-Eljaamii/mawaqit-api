@@ -1,0 +1,69 @@
+# Weekly mutation-testing campaign (cargo-mutants) — the harder half of
+# the test pyramid's question: the 100%-line coverage gate proves every
+# line runs under test; mutation testing proves the tests would NOTICE if
+# the line changed. Survivors are non-gating findings: they land in the
+# job summary and the run artifact, each one a candidate for a stronger
+# assertion (ADR-0006's spirit — executable, numbered, driven to zero).
+name: mutation-weekly
+
+on:
+  schedule:
+    # Wednesdays 03:00 UTC — spread from the fuzz campaign (Mondays).
+    - cron: '0 3 * * 3'
+  workflow_dispatch:
+    inputs:
+      jobs:
+        description: 'Parallel mutant builds'
+        required: false
+        default: '4'
+
+permissions:
+  contents: read
+
+jobs:
+  mutants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-mutants
+
+      # Full-tree run, offline tiers only: cargo-mutants drives `cargo
+      # test`, whose default set is exactly the offline pyramid (the e2e
+      # tier is #[ignore]d), so no live traffic ever leaves the runner.
+      # A per-mutant timeout keeps pathological mutants from eating the
+      # budget; j4 keeps a weekly run inside the 350-minute ceiling.
+      - name: cargo mutants
+        run: |
+          cargo mutants \
+            --jobs ${{ github.event.inputs.jobs || '4' }} \
+            --timeout 600 \
+            --output target/mutants
+
+      # Survivors, caught, timeout and unviable counts — the week's
+      # testing-strength report at a glance.
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo "## Mutation testing (cargo-mutants)"
+            echo '```'
+            tail -40 target/mutants/mutants.out || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload mutation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-report
+          path: |
+            target/mutants/mutants.out
+            target/mutants/mutants.out.json
+          if-no-files-found: warn
+          retention-days: 30

@@ -86,9 +86,13 @@ const FLAG_FAJR_REL: u8 = 0x08;
 /// identical for all scopes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScopeType {
+    /// A single week of days.
     Week,
+    /// One or more whole months.
     Months,
+    /// A full year of days.
     Year,
+    /// Any other range, including unknown wire bytes (from_byte's catch-all).
     Custom,
 }
 
@@ -121,32 +125,72 @@ impl ScopeType {
 /// these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum CompactError {
+    /// The payload does not start with the `MQTC` magic — not MQTC data.
     #[error("bad magic: not MQTC data")]
     InvalidMagic,
+    /// A future (or corrupt) wire version; this codec reads v1 only.
     #[error("unsupported MQTC version {0}")]
-    UnsupportedVersion(u8),
+    UnsupportedVersion(
+        /// The version byte the payload carries.
+        u8,
+    ),
+    /// The buffer ends before the header or the day records require.
     #[error("buffer smaller than the MQTC payload requires")]
     BufferTooSmall,
+    /// Payload integrity failure — corrupt flash write or flipped bits.
+    /// `expected`/`computed` are the header-claimed and actual CRC-32.
     #[error(
         "CRC-32 mismatch: header says {expected:#010x}, bytes hash to {computed:#010x} — corrupt flash write or flipped bits"
     )]
-    ChecksumMismatch { expected: u32, computed: u32 },
+    ChecksumMismatch {
+        /// CRC-32 the header claims.
+        expected: u32,
+        /// CRC-32 the payload bytes actually hash to.
+        computed: u32,
+    },
+    /// `start_year`/`start_day_of_year` do not resolve to a real date
+    /// (e.g. day 0 or day 366 of a non-leap year).
     #[error("start_year/start_day_of_year do not resolve to a valid date")]
     InvalidDate,
+    /// Packer input (or decode, strict mode) carried a time outside the
+    /// `0..=1439` minutes-from-midnight range at prayer index `prayer`.
     #[error(
         "time value {minutes} is out of range 0..=1439 (prayer index {prayer})"
     )]
-    TimeOutOfRange { prayer: u8, minutes: u16 },
+    TimeOutOfRange {
+        /// Zero-based prayer slot the bad value was found at.
+        prayer: u8,
+        /// The out-of-range value.
+        minutes: u16,
+    },
+    /// A fajr-relative adhan slot has no encoding: the delta from fajr is
+    /// negative (non-ascending input) or above a day's worth of minutes.
     #[error(
         "fajr-relative record cannot encode delta {delta} at prayer index {prayer} (> 1439 from fajr)"
     )]
-    DeltaOverflow { prayer: u8, delta: u16 },
+    DeltaOverflow {
+        /// Zero-based adhan slot the unencodable delta was found at.
+        prayer: u8,
+        /// The unencodable (possibly negative, reported absolute) delta.
+        delta: u16,
+    },
+    /// A fajr-relative iqama offset does not fit its one-byte field (the
+    /// 0xFF value is the absent sentinel). Use the direct format instead.
     #[error(
         "iqama offset {delta} minutes cannot be encoded in one byte at prayer index {prayer} (max {MAX_IQAMA_OFFSET}); use the direct format"
     )]
-    IqamaOffsetOverflow { prayer: u8, delta: u16 },
+    IqamaOffsetOverflow {
+        /// Zero-based adhan slot the oversized offset was found at.
+        prayer: u8,
+        /// The offset in minutes that exceeded the one-byte bound.
+        delta: u16,
+    },
+    /// More day records than the u16 wire count field can address.
     #[error("{0} day records exceed the u16 wire field")]
-    TooManyDays(usize),
+    TooManyDays(
+        /// The day-record count that overflowed the wire field.
+        usize,
+    ),
     /// FINDING F29: the source emitters interpolate `const_name` into
     /// generated Rust/C code; a name outside `[A-Za-z_][A-Za-z0-9_]*`
     /// (≤ 64 bytes) is rejected instead of injected into the firmware
@@ -162,7 +206,12 @@ pub enum CompactError {
 /// - bit 15: `ROLLOVER` — the instant belongs to the *next* calendar day
 /// - bit 14: `VALID` — an iqama is configured for this prayer
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CompactTime(pub u16);
+pub struct CompactTime(
+    /// The raw wire bitfield: 11-bit minutes plus the iqama status bits.
+    /// Prefer the accessors — hand-crafted values skip the pack-time
+    /// validation every codec path applies.
+    pub u16,
+);
 
 impl CompactTime {
     /// Minutes from midnight of the display day (0..=1439).
@@ -216,11 +265,17 @@ impl CompactTime {
 /// The six adhan times of one day (minutes from midnight each).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CompactAdhanTimes {
+    /// Fajr (dawn) adhan.
     pub fajr: CompactTime,
+    /// Shurouq (sunrise) — informational, not a prayer.
     pub shurouq: CompactTime,
+    /// Dhuhr (midday) adhan.
     pub dhuhr: CompactTime,
+    /// Asr (afternoon) adhan.
     pub asr: CompactTime,
+    /// Maghrib (sunset) adhan.
     pub maghrib: CompactTime,
+    /// Isha (night) adhan.
     pub isha: CompactTime,
 }
 
@@ -228,10 +283,15 @@ pub struct CompactAdhanTimes {
 /// validity bit unset ([`CompactTime::is_valid`] is `false`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CompactIqamaTimes {
+    /// Fajr iqama (`is_valid()` false when the mosque publishes none).
     pub fajr: CompactTime,
+    /// Dhuhr iqama.
     pub dhuhr: CompactTime,
+    /// Asr iqama.
     pub asr: CompactTime,
+    /// Maghrib iqama.
     pub maghrib: CompactTime,
+    /// Isha iqama.
     pub isha: CompactTime,
 }
 
@@ -239,8 +299,12 @@ pub struct CompactIqamaTimes {
 /// byte (bit 0: mosque-level custom Jumu'ah override).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CompactDayTimes {
+    /// The day's six adhan times.
     pub adhan: CompactAdhanTimes,
+    /// The day's five iqama times; `None` when no iqama is configured.
     pub iqama: Option<CompactIqamaTimes>,
+    /// The record's raw day-flags byte (bit 0: custom Jumu'ah override).
+    /// Always `0` in fajr-relative records, which carry no flags.
     pub day_flags: u8,
 }
 
@@ -513,7 +577,11 @@ impl<'a> CompactCalendarView<'a> {
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CompactIqamaInput {
+    /// Iqama minutes from midnight of the *display* day (`0..=1439`) —
+    /// the wall-clock value, not the offset from the adhan.
     pub minutes: u16,
+    /// Whether this instant belongs to the next calendar day (C1
+    /// rollover); encoded as the dedicated status bit.
     pub rollover: bool,
 }
 
@@ -523,8 +591,15 @@ pub struct CompactIqamaInput {
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[derive(Debug, Clone, Copy)]
 pub struct CompactDayInput {
+    /// Adhan times in minutes from midnight, API order
+    /// `[Fajr, Shurouq, Dhuhr, Asr, Maghrib, Isha]`; each validated
+    /// `0..=1439` at pack time (and ascending in the fajr-relative format).
     pub adhan: [u16; 6],
+    /// Iqama entries in order `[fajr, dhuhr, asr, maghrib, isha]`; `None`
+    /// encodes the absent-sentinel for that prayer.
     pub iqama: [Option<CompactIqamaInput>; 5],
+    /// Day-flags byte (bit 0: mosque-level custom Jumu'ah override).
+    /// Ignored in the fajr-relative record, which carries no flags.
     pub day_flags: u8,
 }
 

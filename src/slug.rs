@@ -14,6 +14,17 @@ pub(crate) const PAGE_LANG: &str = "en";
 /// wire as a giant URL). FINDING F2: anything else must never reach the
 /// network verbatim — `../` escapes the mosque namespace and `?`/`#` swap
 /// the page under a legit-looking slug.
+///
+/// # Examples
+///
+/// ```rust
+/// use mawaqit_api::is_valid_slug;
+///
+/// assert!(is_valid_slug("grande-mosquee-de-paris"));
+/// assert!(!is_valid_slug("../admin"));      // path escape
+/// assert!(!is_valid_slug("paris?next=#x")); // query/fragment injection
+/// assert!(!is_valid_slug("-leading-dash")); // not a published shape
+/// ```
 pub fn is_valid_slug(slug: &str) -> bool {
     !slug.is_empty()
         && slug.len() <= 128
@@ -28,6 +39,17 @@ pub fn is_valid_slug(slug: &str) -> bool {
 /// The exact URL [`crate::MawaqitClient::conf_data`] fetches for a slug.
 /// Exposed as a pure function so hostile-slug handling (`../`, `?`, `#`,
 /// giant or non-ASCII slugs) can be asserted without touching the network.
+///
+/// # Examples
+///
+/// ```rust
+/// use mawaqit_api::page_url;
+///
+/// assert_eq!(
+///     page_url("https://mawaqit.net", "grande-mosquee-de-paris"),
+///     "https://mawaqit.net/en/grande-mosquee-de-paris",
+/// );
+/// ```
 #[cfg(any(feature = "std", feature = "alloc"))]
 pub fn page_url(site_base: &str, mosque_id: &str) -> alloc::string::String {
     alloc::format!("{site_base}/{PAGE_LANG}/{mosque_id}")

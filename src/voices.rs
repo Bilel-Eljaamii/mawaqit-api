@@ -89,6 +89,18 @@ pub const ADHAN_VOICES: [AdhanVoice; 8] = [
 /// The CDN URL for a catalog voice. Unknown ids are rejected: a caller may
 /// pass a hostile string here, and a URL is only ever built from the static
 /// catalog.
+///
+/// # Examples
+///
+/// ```rust
+/// use mawaqit_api::adhan_voice_url;
+///
+/// assert_eq!(
+///     adhan_voice_url("adhan-maquah").as_deref(),
+///     Some("https://cdn.mawaqit.net/audio/adhan-maquah.mp3"),
+/// );
+/// assert_eq!(adhan_voice_url("not-in-the-catalog"), None);
+/// ```
 #[cfg(any(feature = "std", feature = "alloc"))]
 pub fn adhan_voice_url(id: &str) -> Option<String> {
     ADHAN_VOICES
@@ -100,6 +112,16 @@ pub fn adhan_voice_url(id: &str) -> Option<String> {
 /// The voice the mosque itself uses (`adhanVoice` on the mosque page),
 /// validated against the catalog; `None` when the mosque uses the default
 /// (`null`) or publishes an unknown id.
+///
+/// # Examples
+///
+/// ```rust
+/// use mawaqit_api::{ConfData, voice_id_from_conf};
+///
+/// let conf: ConfData =
+///     serde_json::from_str(r#"{"adhanVoice": "adhan-madina"}"#).unwrap();
+/// assert_eq!(voice_id_from_conf(&conf), Some("adhan-madina"));
+/// ```
 #[cfg(any(feature = "std", feature = "alloc"))]
 pub fn voice_id_from_conf(conf: &ConfData) -> Option<&'static str> {
     let raw = conf.raw.get("adhanVoice")?.as_str()?;
@@ -112,6 +134,18 @@ pub fn voice_id_from_conf(conf: &ConfData) -> Option<&'static str> {
 /// cap). The download goes through the client's HTTP stack, so a proxy
 /// (Tor) applies. Playback fallback is the caller's concern: on `Err`, play
 /// the builtin instead.
+///
+/// # Examples
+///
+/// ```no_run
+/// # async fn demo() -> Result<(), mawaqit_api::MawaqitError> {
+/// let client = mawaqit_api::MawaqitClient::new();
+/// let dir = std::path::PathBuf::from("/var/lib/myapp/voices");
+/// let path = mawaqit_api::download_voice(&client, "adhan-maquah", &dir).await?;
+/// println!("cached at {}", path.display());
+/// # Ok(())
+/// # }
+/// ```
 #[cfg(feature = "std")]
 pub async fn download_voice(
     client: &MawaqitClient,

@@ -28,6 +28,17 @@ pub(crate) fn is_displayable_hhmm(s: &str) -> bool {
 
 /// Convenience: minutes between two "HH:MM" times (b-a), handling midnight
 /// wrap.
+///
+/// # Examples
+///
+/// ```rust
+/// use mawaqit_api::minutes_between;
+///
+/// assert_eq!(minutes_between("05:30", "06:00"), Some(30));
+/// // Midnight wrap: 23:30 -> 00:15 is 45 minutes into the next day.
+/// assert_eq!(minutes_between("23:30", "00:15"), Some(45));
+/// assert_eq!(minutes_between("25:70", "00:15"), None);
+/// ```
 pub fn minutes_between(a: &str, b: &str) -> Option<i64> {
     let a = parse_hhmm(a)?;
     let b = parse_hhmm(b)?;

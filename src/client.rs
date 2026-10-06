@@ -77,6 +77,18 @@ struct Inner {
 }
 
 impl MawaqitClient {
+    /// A client against the real mawaqit.net endpoints — no API key.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn demo() -> Result<(), mawaqit_api::MawaqitError> {
+    /// let client = mawaqit_api::MawaqitClient::new();
+    /// let mosques = client.search_mosques("Paris").await?;
+    /// println!("{}", mosques[0].display_name());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn new() -> Self {
         Self::with_base_urls(
             API_URL_BASE.to_string(),
@@ -172,6 +184,15 @@ impl MawaqitClient {
     /// Serve [`Self::conf_data`] from a disk snapshot when the network is
     /// unavailable, and refresh the snapshot on every successful fetch —
     /// the offline layer. See [`crate::disk`].
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::path::PathBuf;
+    ///
+    /// let client = mawaqit_api::MawaqitClient::new()
+    ///     .with_disk_cache(PathBuf::from("/var/lib/myapp/snapshots"));
+    /// ```
     pub fn with_disk_cache(mut self, dir: PathBuf) -> Self {
         self.disk = Some(Arc::new(dir));
         self
@@ -188,6 +209,14 @@ impl MawaqitClient {
     ///
     /// The library never starts or bundles a Tor daemon — point this at
     /// one that is already running.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// let client = mawaqit_api::MawaqitClient::new()
+    ///     .with_socks_proxy("socks5h://127.0.0.1:9050")
+    ///     .expect("tor daemon address");
+    /// ```
     pub fn with_socks_proxy(self, addr: impl Into<String>) -> Result<Self> {
         let proxy = validate_socks_proxy(&addr.into())?;
         Self::from_parts(
@@ -217,6 +246,19 @@ impl MawaqitClient {
     }
 
     /// `GET /api/2.0/mosque/search?word=...` — keyword search, no auth.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn demo() -> Result<(), mawaqit_api::MawaqitError> {
+    /// let client = mawaqit_api::MawaqitClient::new();
+    /// for mosque in client.search_mosques("Paris").await? {
+    ///     println!("{} ({})", mosque.display_name(),
+    ///         mosque.place().unwrap_or_default());
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn search_mosques(&self, word: &str) -> Result<Vec<Mosque>> {
         let word = word.trim();
         if word.is_empty() {
@@ -272,6 +314,17 @@ impl MawaqitClient {
     /// is the page slug, e.g. `grande-mosquee-de-paris`. When the network
     /// fails and a disk snapshot exists ([`Self::with_disk_cache`]), the
     /// snapshot is served instead.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn demo() -> Result<(), mawaqit_api::MawaqitError> {
+    /// let client = mawaqit_api::MawaqitClient::new();
+    /// let conf = client.conf_data("grande-mosquee-de-paris").await?;
+    /// println!("{}", conf.name.as_deref().unwrap_or("?"));
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn conf_data(&self, mosque_id: &str) -> Result<Arc<ConfData>> {
         self.conf_data_dated(mosque_id).await.map(|(conf, _)| conf)
     }
@@ -340,6 +393,18 @@ impl MawaqitClient {
     }
 
     /// Adhan + resolved iqama times for today (local timezone).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn demo() -> Result<(), mawaqit_api::MawaqitError> {
+    /// let client = mawaqit_api::MawaqitClient::new();
+    /// let today = client.today("grande-mosquee-de-paris").await?;
+    /// println!("Fajr {} — iqama {}", today.adhan.fajr,
+    ///     today.iqama.as_ref().map(|i| i.fajr.as_str()).unwrap_or("?"));
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn today(&self, mosque_id: &str) -> Result<TodayTimes> {
         let conf = self.conf_data(mosque_id).await?;
         calendar::times_for_date(&conf, Local::now().date_naive())
