@@ -128,11 +128,12 @@ fn find_conf_data_json(html: &str) -> Option<&str> {
     None
 }
 
-/// Length of the balanced `{...}` JSON literal at the start of `s`.
+/// Length of the balanced `{...}` JSON literal at the start of `s`. The
+/// caller pre-checks the opening brace (a candidate that is not a literal
+/// is a mention to skip, not a failed scan — F26); this function is still
+/// total: input that never opens an object simply never closes one, and a
+/// `}` at depth 0 is ignored instead of underflowing the counter.
 fn balanced_json(s: &str) -> Option<&str> {
-    if !s.starts_with('{') {
-        return None;
-    }
     let bytes = s.as_bytes();
     let mut depth = 0usize;
     let mut in_string = false;
@@ -152,7 +153,7 @@ fn balanced_json(s: &str) -> Option<&str> {
         match b {
             b'"' => in_string = true,
             b'{' => depth += 1,
-            b'}' => {
+            b'}' if depth > 0 => {
                 depth -= 1;
                 if depth == 0 {
                     return Some(&s[..=i]);
