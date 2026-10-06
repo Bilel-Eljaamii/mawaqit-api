@@ -6,6 +6,8 @@ versioning: [semver](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-06
+
 ### Added
 
 - `just verify` now runs the coverage gate and prints a per-file terminal
@@ -13,6 +15,16 @@ versioning: [semver](https://semver.org/).
   the same per-binary union the badge and the 100% gate use — no llvm-cov
   aggregate undercounting). The CI and release `verify` jobs install
   `llvm-tools` + `cargo-llvm-cov` accordingly.
+- A CodeQL badge joins the README badge row (the analysis now runs as its
+  own workflow — see Changed).
+
+### Changed
+
+- CodeQL moved off GitHub's default setup (which scanned every push and
+  PR) to an explicit advanced workflow running **nightly only** —
+  cron 01:00 UTC — plus a manual dispatch button, covering `rust` and
+  `actions`. Code scanning belongs to the nightly HIL cadence, not to
+  every push.
 
 ## [0.5.0] - 2026-10-06
 

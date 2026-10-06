@@ -1,6 +1,7 @@
 # mawaqit-api
 
 [![CI](https://img.shields.io/github/actions/workflow/status/Bilel-Eljaamii/mawaqit-api/ci.yml?branch=main&style=flat-square)](https://github.com/Bilel-Eljaamii/mawaqit-api/actions/workflows/ci.yml)
+[![CodeQL](https://img.shields.io/github/actions/workflow/status/Bilel-Eljaamii/mawaqit-api/codeql.yml?branch=main&style=flat-square&label=codeql)](https://github.com/Bilel-Eljaamii/mawaqit-api/actions/workflows/codeql.yml)
 [![crates.io](https://img.shields.io/crates/v/mawaqit-api?style=flat-square)](https://crates.io/crates/mawaqit-api)
 [![docs.rs](https://img.shields.io/docsrs/mawaqit-api?style=flat-square)](https://docs.rs/mawaqit-api)
 [![license](https://img.shields.io/github/license/Bilel-Eljaamii/mawaqit-api?style=flat-square)](LICENSE)
