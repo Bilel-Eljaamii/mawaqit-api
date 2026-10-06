@@ -12,10 +12,10 @@
 #[cfg(not(feature = "std"))]
 use alloc::string::String;
 
-use crate::models::{Announcement, ConfData};
 // std-tier: `Mosque` is only touched by the std-only search-ingress pass.
 #[cfg(feature = "std")]
 use crate::models::Mosque;
+use crate::models::{Announcement, ConfData};
 
 /// Strip control characters and the invisible Unicode *Format* (Cf)
 /// category from free-text display fields — FINDING F6 and its review
