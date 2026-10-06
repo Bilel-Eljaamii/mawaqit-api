@@ -28,7 +28,7 @@ jobs:
 
       - uses: github/codeql-action/init@v3
         with:
-          language: ${{ matrix.language }}
+          languages: ${{ matrix.language }}
 
       - if: matrix.language == 'rust'
         uses: github/codeql-action/autobuild@v3
