@@ -178,7 +178,7 @@ fn is_plausible_timezone(s: &str) -> bool {
 /// One mosque announcement: the banner text and media a mosque publishes
 /// on its page. Free-text fields arrive sanitized (F6); the dates are
 /// wire strings the mosque formatted itself — parse defensively.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Announcement {
     /// Announcement id, wire-typed (numeric on the live site).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -255,7 +255,7 @@ pub struct DailyIqamaTimes {
 /// order. These carry what the display strings cannot (C1): a "+600"
 /// offset after a 23:30 adhan lands on the *next* day, and alarms or
 /// calendars must fire at the instant, not at the rolled wall clock.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct DailyIqamaInstants {
     /// Fajr iqama instant: midnight of the display day plus the resolved
     /// minutes, so rollover already lands on the next day (C1). Mosque-
@@ -272,7 +272,7 @@ pub struct DailyIqamaInstants {
 }
 
 /// Adhan + resolved iqama times for one calendar day.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TodayTimes {
     /// The calendar day these times belong to (the caller's local date
     /// for [`crate::MawaqitClient::today`], the queried date otherwise).

@@ -225,3 +225,117 @@ fn p2_no_iqama_adhan_only() {
         "the day's event sequence, ending on tomorrow's fajr"
     );
 }
+
+// ---------------------------------------------------------------- P4/P5
+
+fn the_date() -> NaiveDate {
+    NaiveDate::from_ymd_opt(2026, 10, 6).unwrap()
+}
+
+/// The fixture calendar defines day 1 of month 1 (January).
+fn view_date() -> NaiveDate {
+    NaiveDate::from_ymd_opt(2026, 1, 1).unwrap()
+}
+
+/// A page fixture for the Today-view projection.
+fn view_conf() -> mawaqit_api::ConfData {
+    let page = r#"<html><script>var confData = {"times":["05:27","06:37","13:21","16:37","19:24","20:51"],
+        "calendar":[{"1":["05:27","06:37","07:07","13:21","16:37","19:24","20:51"]}],
+        "name":"Grande Mosquée","jumua":"13:50","jumua2":"14:30",
+        "image":"https://x.test/a.jpg",
+        "announcements":[
+            {"id":42,"title":"first","start_date":"2026-10-01","end_date":"2026-10-31"},
+            {"id":"second","title":"second"},
+            {"title":"third"}
+        ]};</script></html>"#.to_string();
+    mawaqit_api::parse_page(&page, "view").expect("fixture parses")
+}
+
+/// P4: one call carries everything the Today screen needs — metadata,
+/// the resolved times and keyed announcements.
+#[test]
+fn p4_today_view_carries_the_full_payload() {
+    let conf = view_conf();
+    let view = conf.today_view(view_date()).expect("day resolves");
+    assert_eq!(view.mosque_name.as_deref(), Some("Grande Mosquée"));
+    assert_eq!(view.jumua.as_deref(), Some("13:50"));
+    assert_eq!(view.jumua2.as_deref(), Some("14:30"));
+    assert_eq!(view.image.as_deref(), Some("https://x.test/a.jpg"));
+    assert!(view.imsak_mode, "6 times = imsak mode (single-source rule)");
+    assert_eq!(view.times.adhan.dhuhr, "13:21");
+    assert_eq!(view.announcements.len(), 3);
+    assert_eq!(view.announcements[0].key, "42");
+    assert_eq!(view.announcements[1].key, "second");
+    assert!(
+        view.announcements[2].key.starts_with("hash-"),
+        "id-less announcements get a stable content hash"
+    );
+}
+
+/// P4: keys are stable across re-projections and content-sensitive.
+#[test]
+fn p4_announcement_keys_are_stable_and_content_sensitive() {
+    let a = view_conf().today_view(view_date()).unwrap();
+    let b = view_conf().today_view(view_date()).unwrap();
+    assert_eq!(
+        a.announcements[2].key, b.announcements[2].key,
+        "same content → same hash key"
+    );
+    assert_ne!(a.announcements[0].key, a.announcements[1].key);
+}
+
+/// P4: `today_view` surfaces the calendar errors (`NoCalendar`), never a
+/// fabricated view.
+#[test]
+fn p4_today_view_errors_without_a_calendar() {
+    let page = r#"<html><script>var confData = {"times":["05:27","06:37","13:21","16:37","19:24"]};</script></html>"#;
+    let conf = mawaqit_api::parse_page(page, "empty").unwrap_err();
+    let _ = conf; // parse fails outright; a calendar-less conf via default:
+    let conf = mawaqit_api::ConfData::default();
+    assert!(conf.today_view(the_date()).is_err());
+}
+
+/// P5: the active-window contract — closed bounds, open bounds, both
+/// missing, and hostile bounds = `None` (unknown, never a guess).
+#[test]
+fn p5_is_active_on_windows() {
+    use mawaqit_api::Announcement;
+    let mid = the_date();
+    let ann = |start: Option<&str>, end: Option<&str>| Announcement {
+        id: None,
+        title: None,
+        content: None,
+        image: None,
+        video: None,
+        start_date: start.map(str::to_string),
+        end_date: end.map(str::to_string),
+        extra: Default::default(),
+    };
+
+    assert_eq!(
+        ann(Some("2026-10-01"), Some("2026-10-31")).is_active_on(mid),
+        Some(true)
+    );
+    assert_eq!(
+        ann(Some("2026-10-01"), Some("2026-10-31"))
+            .is_active_on(NaiveDate::from_ymd_opt(2026, 11, 1).unwrap()),
+        Some(false)
+    );
+    assert_eq!(ann(Some("2026-10-06"), None).is_active_on(mid), Some(true));
+    assert_eq!(ann(None, Some("2026-10-05")).is_active_on(mid), Some(false));
+    assert_eq!(
+        ann(None, None).is_active_on(mid),
+        Some(true),
+        "no window = always active"
+    );
+    assert_eq!(
+        ann(Some("soon"), None).is_active_on(mid),
+        None,
+        "hostile start = unknown"
+    );
+    assert_eq!(
+        ann(None, Some("later")).is_active_on(mid),
+        None,
+        "hostile end = unknown"
+    );
+}

@@ -14,10 +14,11 @@
 //! past midnight belongs to *tomorrow* — never sorted back onto the
 //! wrong day the way string comparisons do.
 
-use chrono::{NaiveDateTime, NaiveTime};
+use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
 use crate::{
-    models::{DailyIqamaInstants, TodayTimes},
+    calendar::times_for_date,
+    models::{Announcement, ConfData, DailyIqamaInstants, TodayTimes},
     time::parse_hhmm,
 };
 
@@ -332,5 +333,164 @@ impl DailyIqamaInstants {
             Prayer::Maghrib => self.maghrib,
             Prayer::Isha => self.isha,
         }
+    }
+}
+
+// ------------------------------------------------------------------ P4/P5
+// The alloc-tier consumer surface: the Today view projection and the
+// announcement active-window test (both need `String`, hence alloc).
+
+/// One announcement as the Today view carries it: a stable identity
+/// [`key`](Self::key) for read-state plus the announcement itself.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AnnouncementEntry {
+    /// Stable across re-fetches: the wire id when present (number or
+    /// non-empty string), else `hash-` + FNV-1a-64 of
+    /// `title \0 content \0 start_date` (platform-stable, no_std-safe —
+    /// the desktop's `DefaultHasher` variant is neither).
+    pub key: String,
+    pub announcement: Announcement,
+}
+
+/// The Today view: everything a consumer's main screen needs in one call
+/// (issue #4, P4) — the projection the desktop assembled as
+/// `TodayPayload::from_conf`, now owned by the crate. The offline
+/// snapshot age (`as_of`) is deliberately caller-supplied: staleness
+/// display is app policy, not library data.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TodayView {
+    pub mosque_name: Option<String>,
+    /// Jumu'a times (some mosques have two).
+    pub jumua: Option<String>,
+    pub jumua2: Option<String>,
+    /// Mosque picture — the background image on mawaqit.net.
+    pub image: Option<String>,
+    /// True for "Sabah Imsak" mosques (DİTİB): the first prayer is
+    /// labeled "Imsak", not "Fajr".
+    pub imsak_mode: bool,
+    pub times: TodayTimes,
+    /// The mosque's announcements (wire order), each with its stable key.
+    pub announcements: Vec<AnnouncementEntry>,
+}
+
+impl ConfData {
+    /// The Today view for `date`. `Err` exactly when the calendar cannot
+    /// resolve the day (`times_for_date` semantics: `NoCalendar` /
+    /// `InvalidDay` / month errors).
+    ///
+    /// ```
+    /// use chrono::NaiveDate;
+    /// use mawaqit_api::parse_page;
+    ///
+    /// let page = r#"<html><script>var confData = {
+    ///     "times": ["05:27","06:37","13:21","16:37","19:24","20:51"],
+    ///     "calendar": [{"1": ["05:27","06:37","07:07","13:21","16:37","19:24","20:51"]}],
+    ///     "name": "Grande Mosquée"
+    /// };</script></html>"#;
+    /// let conf = parse_page(page, "paris").unwrap();
+    /// let view = conf
+    ///     .today_view(NaiveDate::from_ymd_opt(2026, 10, 6).unwrap())
+    ///     .unwrap();
+    /// assert_eq!(view.mosque_name.as_deref(), Some("Grande Mosquée"));
+    /// assert_eq!(view.times.adhan.dhuhr, "13:21");
+    /// ```
+    pub fn today_view(&self, date: NaiveDate) -> crate::Result<TodayView> {
+        let times = times_for_date(self, date)?;
+        Ok(TodayView {
+            mosque_name: self.name.clone(),
+            jumua: self.jumua.clone(),
+            jumua2: self.jumua2.clone(),
+            image: self.image.clone(),
+            imsak_mode: self.imsak_mode,
+            times,
+            announcements: self
+                .announcements
+                .iter()
+                .map(|a| AnnouncementEntry {
+                    key: announcement_key(a),
+                    announcement: a.clone(),
+                })
+                .collect(),
+        })
+    }
+}
+
+/// FNV-1a 64-bit — deterministic across platforms and crate versions
+/// (a `DefaultHasher` is neither).
+fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+/// Stable read-state key for an announcement: the wire id when present
+/// (number → string, non-empty string), else the FNV-1a identity hash.
+fn announcement_key(a: &Announcement) -> String {
+    match &a.id {
+        Some(serde_json::Value::Number(n)) => n.to_string(),
+        Some(serde_json::Value::String(s)) if !s.trim().is_empty() => s.clone(),
+        _ => {
+            let mut material = Vec::new();
+            material
+                .extend_from_slice(a.title.as_deref().unwrap_or("").as_bytes());
+            material.push(0);
+            material.extend_from_slice(
+                a.content.as_deref().unwrap_or("").as_bytes(),
+            );
+            material.push(0);
+            material.extend_from_slice(
+                a.start_date.as_deref().unwrap_or("").as_bytes(),
+            );
+            format!("hash-{:016x}", fnv1a(&material))
+        }
+    }
+}
+
+impl Announcement {
+    /// Whether the announcement's active window covers `date`:
+    /// `start_date <= date <= end_date`, a missing bound open. `None`
+    /// when a present bound is not `%Y-%m-%d` — hostile or unknown
+    /// formats mean "unknown", never a guess (the wire format is
+    /// confirmed live in the HIL campaign; any drift degrades to `None`).
+    ///
+    /// ```
+    /// use chrono::NaiveDate;
+    /// use mawaqit_api::Announcement;
+    ///
+    /// let ann = Announcement {
+    ///     id: None,
+    ///     title: None,
+    ///     content: None,
+    ///     image: None,
+    ///     video: None,
+    ///     start_date: Some("2026-10-01".into()),
+    ///     end_date: Some("2026-10-31".into()),
+    ///     extra: Default::default(),
+    /// };
+    /// let mid = NaiveDate::from_ymd_opt(2026, 10, 6).unwrap();
+    /// assert_eq!(ann.is_active_on(mid), Some(true));
+    /// assert_eq!(ann.is_active_on(NaiveDate::from_ymd_opt(2026, 11, 1).unwrap()), Some(false));
+    /// // An unparsable bound is "unknown", never a guess.
+    /// let hostile = Announcement { start_date: Some("soon".into()), ..ann.clone() };
+    /// assert_eq!(hostile.is_active_on(mid), None);
+    /// ```
+    pub fn is_active_on(&self, date: NaiveDate) -> Option<bool> {
+        let bound = |raw: &Option<String>| -> Option<Option<NaiveDate>> {
+            match raw {
+                // Missing bound = open.
+                None => Some(None),
+                // Present but unparsable = unknown (the whole test is
+                // `None`), never silently treated as open.
+                Some(s) => {
+                    NaiveDate::parse_from_str(s, "%Y-%m-%d").ok().map(Some)
+                }
+            }
+        };
+        let start = bound(&self.start_date)?;
+        let end = bound(&self.end_date)?;
+        Some(start.is_none_or(|s| s <= date) && end.is_none_or(|e| date <= e))
     }
 }
