@@ -143,3 +143,22 @@ the *earlier* offset on the ambiguous autumn hour (a late alarm is less
 harmful than one that lies about having passed). The library never picks
 an offset itself — see
 [ADR-0015](../adr/0015-timezone-and-iqama-instants.md).
+
+## Next-event resolution (P1/P2, 0.6.0)
+
+`TodayTimes::next_event(now: NaiveTime) -> Option<PrayerEvent>` answers
+"what is next": the five adhan events, the informational shuruq, and —
+when the iqama resolved — the five iqama events as **absolute instants**
+built on `iqama_at` (C1 rollover included: a past-midnight iqama is
+tomorrow's event, never sorted back onto today). The earliest candidate
+strictly after `now` wins; ties break adhan → iqama → shuruq; when
+everything today has passed, tomorrow's first adhan answers. Hostile
+hand-built `HH:MM` fields are inert (skipped), never misparsed;
+`None` only when nothing at all resolves.
+
+The shared selection rule lives in core (`prayer::select_next`) and is
+the very same one the MQTC tier uses (`CompactDayTimes::next_event`),
+so desktop and firmware semantics cannot drift. `Prayer` (the five
+adhan prayers), `PrayerEventKind` and `PrayerEvent` are core-tier
+types; `PrayerEventKind::state_key()` (`"fajr/adhan"`…) is the stable
+identity for dedup and persisted alert state.

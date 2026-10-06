@@ -34,6 +34,8 @@ mod common;
 mod compact;
 #[path = "ut/corpus.rs"]
 mod corpus;
+#[path = "ut/prayer.rs"]
+mod prayer;
 #[path = "ut/scraper.rs"]
 mod scraper;
 #[path = "ut/semantics.rs"]

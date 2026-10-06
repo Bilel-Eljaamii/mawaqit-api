@@ -52,6 +52,9 @@ pub mod disk;
 mod error;
 #[cfg(any(feature = "std", feature = "alloc"))]
 mod models;
+/// Consumer-facing prayer identity + next-event resolution (issue #4) —
+/// core types usable at every tier down to bare metal.
+pub mod prayer;
 /// The shared free-text sanitizer (ADR-0003) — one character policy at
 /// every ingress: page parse, search results, disk snapshot load.
 #[cfg(any(feature = "std", feature = "alloc"))]
@@ -77,6 +80,7 @@ pub use models::{
     DailyPrayerTimes, DayIqamaTimes, DayTimes, MonthIqamaTimes, MonthTimes,
     Mosque, RawCalendar, RawMonth, TodayTimes,
 };
+pub use prayer::{Prayer, PrayerEvent, PrayerEventKind};
 /// Parse a mosque page's HTML into its [`ConfData`] — exposed for tests
 /// and fuzzing; [`MawaqitClient::conf_data`] is the network-backed
 /// wrapper.
